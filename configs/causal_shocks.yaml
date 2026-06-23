@@ -1,0 +1,144 @@
+# =============================================================================
+# Causal shocks — the BEGINNER dataset
+# =============================================================================
+# Three obvious, step-change shocks for learning the basics of shock
+# detection: each one is clearly visible on a weekly chart. For the advanced
+# version where every shock hides behind a wrong first diagnosis, see
+# sneaky_shocks.yaml.
+
+dataset_name: notion_causal  # filename prefix for the analyst-facing CSVs
+
+global_settings:
+  base_users: 100          # new users in the first weekly cohort
+  growth_rate: 0.025       # week-over-week growth in new signups (2.5%)
+  start_date: "2024-01-01" # first cohort date (a Monday)
+  periods_to_simulate: 52  # number of weekly cohorts
+
+# -----------------------------------------------------------------------------
+# Dimensions: per-user categorical attributes assigned at signup, written as
+# columns on every event. `retention_multiplier` makes channel quality real
+# (referral users retain best, paid worst).
+# -----------------------------------------------------------------------------
+dimensions:
+  acquisition_channel:
+    values: {organic: 0.40, paid_search: 0.30, social: 0.20, referral: 0.10}
+    retention_multiplier: {organic: 1.0, paid_search: 0.80, social: 0.85, referral: 1.15}
+  country:
+    values: {US: 0.40, DE: 0.15, UK: 0.12, IN: 0.18, BR: 0.15}
+  platform:
+    values: {web: 0.50, ios: 0.30, android: 0.20}
+
+# -----------------------------------------------------------------------------
+# Releases: app versions adopted gradually; here purely a column (no shock is
+# tied to a release in this dataset).
+# -----------------------------------------------------------------------------
+releases:
+  adoption_rate: 0.30
+  versions:
+    - {version: "2.3", week: 0}
+    - {version: "2.4", week: 20}
+
+# -----------------------------------------------------------------------------
+# Plans: tier assigned at signup (per segment); active users upgrade/downgrade
+# weekly, emitting events. Paying users are causally more engaged via the
+# multipliers — visible when comparing paid vs free WITHIN a segment.
+# -----------------------------------------------------------------------------
+plans:
+  levels: [free, pro, team]
+  multipliers:
+    activity:  {free: 1.0, pro: 1.20, team: 1.35}
+    retention: {free: 1.0, pro: 1.05, team: 1.35}
+  signup_distribution:
+    casual: {free: 0.97, pro: 0.03, team: 0.00}
+    core:   {free: 0.75, pro: 0.22, team: 0.03}
+    power:  {free: 0.35, pro: 0.50, team: 0.15}
+  weekly_transitions:
+    upgrade: 0.0      # plan-change EVENTS removed (page_shared is the value metric);
+    downgrade: 0.0    # plan multipliers above still add engagement heterogeneity
+
+# -----------------------------------------------------------------------------
+# Shocks: time-boxed events that scale some behaviour by `multiplier`.
+#   - acquisition : scales how many new users sign up that week
+#   - feature     : scales the probability of one feature (target_feature)
+#   - retention   : scales the probability that existing users stay active
+# `start_week` / `end_week` are absolute, 0-indexed simulation weeks.
+# -----------------------------------------------------------------------------
+shocks:
+  - type: acquisition
+    start_week: 10
+    end_week: 14
+    multiplier: 0.4
+    description: "Marketing Paused (Weeks 10-14)"
+
+  - type: feature
+    target_feature: used_ai
+    start_week: 25
+    end_week: 28
+    multiplier: 0.0
+    description: "AI Server Crash (Zero Usage Wk 25-28)"
+
+  - type: retention
+    start_week: 40
+    end_week: 52
+    multiplier: 0.7
+    description: "Competitor Launch (High Churn Wk 40+)"
+
+# -----------------------------------------------------------------------------
+# Causality: page views are a function of the actions a user took that week.
+#   page_views ≈ (base_views + Σ action_count * weight) * noise
+# This lets a feature shock (e.g. the AI outage) ripple into page views.
+#
+# Two extra causal edges layer on top (both optional; omit them and the model
+# behaves exactly as before):
+#   activity_weights      -> feature usage spawns EXTRA pages_created. Here AI
+#                            makes users more productive: each used_ai event
+#                            yields ~1.5 extra pages (which then drive more
+#                            page views via the page_created weight above).
+#   marginal_page_multiplier -> those AI-spawned pages are lower-quality, so
+#                            their per-page chance of being shared/commented is
+#                            scaled down. Net effect: as pages rise, shares rise
+#                            SUBLINEARLY ("more pages, relatively fewer shares").
+#                            Interacts with the AI outage (wk 25-28): when AI
+#                            usage -> 0, the extra low-quality pages vanish, so
+#                            page_created/page_view dip BUT shared-per-page ticks
+#                            UP — a subtle, discoverable composition effect.
+# -----------------------------------------------------------------------------
+causality:
+  base_views: 2
+  noise_scale: 0.1
+  weights:
+    page_shared: 5.0
+    used_ai: 2.0
+    page_created: 2.0
+    created_table: 1.0
+    commented: 1.0
+  activity_weights:           # feature -> extra pages_created
+    used_ai: 0.3              # softened: used_ai is now a high-frequency Poisson event
+  marginal_page_multiplier:   # feature rate on AI-spawned (marginal) pages
+    page_shared: 0.5
+    commented: 0.7
+
+# -----------------------------------------------------------------------------
+# Segments: user archetypes. `prob` is the share of users in each segment.
+#   retention.plateau / decay  -> active-probability decay curve over weeks
+#   activity_distribution      -> how many pages a user creates in an active week
+#   feature_probabilities      -> per-page chance of each feature event
+# -----------------------------------------------------------------------------
+segments:
+  casual:
+    prob: 0.50
+    retention: { plateau: 0.10, decay: 0.2 }
+    activity_distribution: { type: poisson, lambda: 0.4 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.18}, created_table: 0.05, commented: 0.03, page_shared: 0.19 }
+
+  core:
+    prob: 0.40
+    retention: { plateau: 0.50, decay: 0.1 }
+    activity_distribution: { type: normal, loc: 3, scale: 1.5 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.70}, created_table: 0.18, commented: 0.15, page_shared: 0.28 }
+
+  power:
+    prob: 0.10
+    retention: { plateau: 0.90, decay: 0.025 }
+    activity_distribution: { type: lognormal, mean: 2.5, sigma: 0.5 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 1.80}, created_table: 0.30, commented: 0.40, page_shared: 0.60 }

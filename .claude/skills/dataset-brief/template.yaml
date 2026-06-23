@@ -1,0 +1,110 @@
+# =============================================================================
+# DATASET BRIEF — read this first
+# =============================================================================
+# This file is the analyst-facing context: everything a data team would
+# realistically know about this dataset. It contains NO spoilers.
+# Do NOT open solutions.yaml until your analysis is written down — it is the
+# answer key.
+
+brief_version: 1
+answer_key: "solutions.yaml — do NOT open before your analysis is written down"
+
+# Machine-readable layer: lets analysis tooling consume the brief without
+# guessing. Extra keys are allowed anywhere; loaders keep them accessible.
+schema:
+  granularity: <weekly | event>
+  time_column: <week>
+  count_column: <event_count>         # omit for per-event logs
+  primary_key: [<week>, <user_id>, <event_type>]
+  dtypes:
+    <column>: <str>                   # columns that mis-parse without a dtype hint
+
+analysis:
+  core_action: <event_type>           # the core production event
+  natural_frequency: <weekly>
+  segment_cols: [<dimension columns usable for cuts>]
+
+data_quality:
+  sparsity: <active_weeks_only | dense>
+  event_count_min: <1>
+
+dataset:
+  file: <name>.csv
+  product: "<one-line product description>"
+  description: >
+    <What the data covers, the time span, that experiments ran (if any), and
+    that unknown incidents may have left marks — without naming them.>
+  rows: <measured row count>
+  users: <~measured user count>
+
+task:
+  - >
+    Find the anomalies/shocks: WHEN (weeks), WHICH metric(s), MAGNITUDE,
+    plausible ROOT CAUSE. The number and type of shocks is not given.
+  - >
+    Read out each A/B experiment: lift with a confidence interval, an SRM
+    sanity check, ship / no-ship. Warn about heavy-tailed per-user activity
+    if applicable.
+  - >
+    Summarize overall product health: growth, retention, engagement mix.
+
+grain: >
+  <One row per (...). When a user appears / doesn't appear. What retention
+  must be derived from. First active week = signup week, if true.>
+
+# How retention is defined for this product (use this definition so your
+# numbers are comparable to the answer key):
+retention_metric:
+  activity_definition: >
+    <What counts as ACTIVE in a period.>
+  cohort_definition: >
+    <How the signup cohort is derived.>
+  retention_rate: >
+    <Exact formula, e.g. classic N-week: active at age / cohort size.>
+  churn_and_resurrection: >
+    <Churn = absence; whether users can return; compute cells independently.>
+  weekly_active_users: >
+    <Headline activity series definition.>
+
+time_coverage:
+  start_week: "<YYYY-MM-DD>"   # day-of-week note
+  end_week: "<YYYY-MM-DD>"
+  n_weeks: <N>                 # index range note
+
+columns:
+  <column_name>:
+    type: <date | int | string>
+    description: "<meaning; note parse gotchas here too>"
+    values: <list or range — must match the CSV's actual uniques>
+  event_type:
+    type: string
+    description: >
+      what the user did; one row per type per user-week. Each event is one
+      logged user action.
+    values:
+      <event_name>: "<precise meaning, unit (one event per ...), volume notes>"
+
+# Facts the team knows about the year (true context, not spoilers):
+known_context:
+  experiments:
+    - name: <experiment_name>
+      variant_column: <exp_... column in the CSV>
+      control_label: control
+      unenrolled_value: ""
+      window_abs_weeks: [<start>, <end>]
+      change: "<what was shipped/changed>"
+      target_metric: "<metric the team intended to move>"
+      assignment: "<ratio, randomization unit, who was eligible>"
+    # Effect sizes were NOT communicated - measuring them is part of the task.
+  releases:
+    - "<release X shipped around week N; adoption pattern>"
+  plans:
+    - "<plan tiers and how changes appear in the data>"
+  beliefs:
+    - "<causal beliefs the team holds about the metrics>"
+    - "<distributional warnings, e.g. heavy-tailed engagement>"
+
+hints:
+  - "<aggregation starting point>"
+  - "<cohort vs calendar cut>"
+  - "<which columns exist for root-cause isolation>"

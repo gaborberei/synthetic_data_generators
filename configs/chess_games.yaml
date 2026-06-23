@@ -1,0 +1,97 @@
+# =============================================================================
+# Chess games — the SINGLE-EVENT dataset
+# =============================================================================
+# A chess.com-like app that emits exactly one event type, `game_played`.
+# With no event mix to dissect, all the signal lives in the time series and
+# the user lifecycle: annual seasonality (chess peaks in winter), AR(1) weekly
+# noise, a one-off news spike, and Duolingo-style engagement-state retention.
+# Ported from the ChessEngagementGenerator prototype in duolingo.ipynb.
+
+dataset_name: chess_games   # filename prefix for the analyst-facing CSVs
+
+base_event: game_played     # the one event type (replaces page_created)
+# No `causality` block: no derived page-view events — game_played is all
+# there is. Volume per active week comes from activity_distribution below.
+
+global_settings:
+  base_users: 200          # new players in the first weekly cohort
+  growth_rate: 0.02        # week-over-week growth in new signups (2%)
+  start_date: "2024-01-01" # first cohort date (a Monday)
+  periods_to_simulate: 52
+
+# -----------------------------------------------------------------------------
+# Duolingo growth-model retention: instead of a per-segment decay curve, a
+# player's weekly active probability depends on how long ago they last played
+# and which bucket they were in. The named rates are Duolingo's "arrows":
+#   CURR  Current -> Current        (the North Star)
+#   NURR  New -> Current
+#   RURR  Reactivated -> Current
+#   SURR  Resurrected -> Current
+#   REAC  gap of 2-4 weeks -> Reactivated
+#   RESU  gap of 5+ weeks -> Resurrected
+# -----------------------------------------------------------------------------
+transitions:
+  CURR: 0.82
+  NURR: 0.45
+  RURR: 0.35
+  SURR: 0.20
+  REAC: 0.15
+  RESU: 0.05
+
+# -----------------------------------------------------------------------------
+# Time-series realism. Seasonality is 1 + amp * cos(2*pi*week/period_weeks):
+# peak at week 0 (January), trough mid-year — chess is a winter sport. The
+# AR(1) noise is multiplicative and shared across metrics, so good weeks
+# cluster. Retention gets a tiny amplitude and dampened noise
+# (noise ** retention_power) because weekly retention compounds into WAU very
+# aggressively — larger values produce hockey sticks.
+# The realized weekly multipliers are exported to ground_truth_timeseries.csv.
+# -----------------------------------------------------------------------------
+time_series:
+  seasonality:
+    period_weeks: 52
+    acquisition_amp: 0.30
+    activity_amp: 0.15
+    retention_amp: 0.02
+  noise:
+    phi: 0.7
+    sigma: 0.06
+    retention_power: 0.25
+  user_variance_sigma: 0.45   # persistent lognormal per-player engagement
+  spikes:
+    - {week: 46, multiplier: 1.8, description: "World Championship coverage"}
+
+# Games happen all week (chess weekends are big) and skew toward the evening.
+timestamps:
+  days: 7
+  peak_hour: 20
+
+# -----------------------------------------------------------------------------
+# Dimensions: per-player attributes at signup, written on every event.
+# Channel quality is real (referral retains best, paid worst).
+# -----------------------------------------------------------------------------
+dimensions:
+  acquisition_channel:
+    values: {organic: 0.45, paid_search: 0.20, social: 0.25, referral: 0.10}
+    retention_multiplier: {organic: 1.0, paid_search: 0.80, social: 0.85, referral: 1.15}
+  country:
+    values: {US: 0.30, IN: 0.20, RU: 0.12, DE: 0.10, BR: 0.10, UK: 0.10, PH: 0.08}
+  platform:
+    values: {web: 0.45, ios: 0.25, android: 0.30}
+
+# -----------------------------------------------------------------------------
+# Segments: how many games an active player gets through in a week.
+# No feature_probabilities — game_played is the only event.
+# -----------------------------------------------------------------------------
+segments:
+  casual:
+    prob: 0.50
+    activity_distribution: { type: poisson, lambda: 1.5 }
+
+  core:
+    prob: 0.40
+    activity_distribution: { type: poisson, lambda: 5.0 }
+
+  power:
+    prob: 0.10
+    activity_distribution: { type: poisson, lambda: 12.0 }

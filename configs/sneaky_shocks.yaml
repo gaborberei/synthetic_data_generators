@@ -1,0 +1,188 @@
+# =============================================================================
+# Sneaky shocks — the ADVANCED dataset
+# =============================================================================
+# Same Notion-like world as causal_shocks.yaml, but every shock is designed so
+# the analyst's first instinct is wrong, and two A/B experiments run on top
+# (one honest, one with a novelty trap).
+#
+# SPOILERS below — hand analysts only the events CSVs, never this file.
+
+dataset_name: notion_sneaky   # filename prefix for the analyst-facing CSVs
+
+global_settings:
+  base_users: 100
+  growth_rate: 0.025
+  start_date: "2024-01-01"
+  periods_to_simulate: 52
+
+# -----------------------------------------------------------------------------
+# Dimensions: per-user categorical attributes assigned at signup, written as
+# columns on every event. `retention_multiplier` scales the weekly
+# active-probability by value (e.g. paid users churn faster) — that quality
+# gap is what makes channel-mix shifts move blended retention.
+# -----------------------------------------------------------------------------
+dimensions:
+  acquisition_channel:
+    values: {organic: 0.40, paid_search: 0.30, social: 0.20, referral: 0.10}
+    retention_multiplier: {organic: 1.0, paid_search: 0.80, social: 0.85, referral: 1.15}
+  country:
+    values: {US: 0.40, DE: 0.15, UK: 0.12, IN: 0.18, BR: 0.15}
+  platform:
+    values: {web: 0.50, ios: 0.30, android: 0.20}
+
+# -----------------------------------------------------------------------------
+# Releases: app versions. New signups start on the latest release; existing
+# users adopt a new release with prob `adoption_rate` per week (sticky).
+# Events carry the user's current app_version.
+# -----------------------------------------------------------------------------
+releases:
+  adoption_rate: 0.30
+  versions:
+    - {version: "2.3", week: 0}
+    - {version: "2.4", week: 20}   # the release that broke onboarding (shock 3)
+
+# -----------------------------------------------------------------------------
+# Plans: tier assigned at signup (per segment), then active users move up or
+# down each week with the transition probabilities, emitting `upgraded` /
+# `downgraded` events. Current plan is NOT an event column — analysts can
+# reconstruct it from signup distribution + the change events.
+# -----------------------------------------------------------------------------
+plans:
+  levels: [free, pro, team]
+  # Paying users are CAUSALLY more engaged, on top of the compositional
+  # correlation (power users skew paid at signup). Detectable by comparing
+  # paid vs free WITHIN a segment.
+  multipliers:
+    activity:  {free: 1.0, pro: 1.20, team: 1.35}
+    retention: {free: 1.0, pro: 1.05, team: 1.35}
+  signup_distribution:
+    casual: {free: 0.97, pro: 0.03, team: 0.00}
+    core:   {free: 0.75, pro: 0.22, team: 0.03}
+    power:  {free: 0.35, pro: 0.50, team: 0.15}
+  weekly_transitions:
+    upgrade: 0.0      # plan-change EVENTS removed (page_shared is the value metric);
+    downgrade: 0.0    # plan multipliers above still add engagement heterogeneity
+
+# -----------------------------------------------------------------------------
+# Shocks. Extra fields on top of the beginner config:
+#   - where: {column: [values]}  -> scope a shock to matching users; works on
+#     segment, any dimension, app_version (at signup), plan.
+#   - cohort_scope: new          -> start/end select *signup cohorts*; the
+#     effect follows those cohorts for their whole lifetime.
+#   - type: instrumentation      -> drops a share of *logged* events after
+#     generation; behaviour (and causal page views) is unaffected.
+#   - type: activity             -> scales pages created per active week.
+#   - type: transition           -> scales an upgrade/downgrade probability
+#     (target: upgrade | downgrade).
+# -----------------------------------------------------------------------------
+shocks:
+  # 1. Instrumentation bug: weeks 12-16 only 35% of `commented` events get
+  #    logged. Looks like an engagement drop, but page views (driven by true
+  #    behaviour) don't move -> it's the tracking, not the product.
+  - type: instrumentation
+    target_feature: commented
+    start_week: 12
+    end_week: 16
+    multiplier: 0.35
+    description: "Tracking bug: 65% of commented events lost (wk 12-16)"
+
+  # 2. Price increase at week 30, casual segment only: more of them churn,
+  #    but the ones who stay are more engaged. Topline event volume barely
+  #    moves (0.8 x 1.3 ~ 1.04) — only segment-level analysis reveals the
+  #    mix shift. The downgrade spike (wk 30-33) is the root-cause clue.
+  - type: retention
+    where: {segment: [casual]}
+    start_week: 30
+    end_week: 51
+    multiplier: 0.8
+    description: "Price increase: casual churn up (wk 30+)"
+
+  - type: activity
+    where: {segment: [casual]}
+    start_week: 30
+    end_week: 51
+    multiplier: 1.3
+    description: "Price increase: surviving casuals more engaged (wk 30+)"
+
+  # Was a `transition` (downgrade-wave) shock; plan-change events are removed,
+  # so the price-increase clue now surfaces as a sharp, short retention dip
+  # concentrated in PAYING users (the ones a price increase actually hits).
+  - type: retention
+    where: {plan: [pro, team]}
+    start_week: 30
+    end_week: 33
+    multiplier: 0.6
+    description: "Price increase: paid users churn in a wave (wk 30-33)"
+
+  # 3. Onboarding regression: cohorts that SIGN UP from week 20 on (i.e. who
+  #    onboarded on release 2.4) retain worse for their whole lifetime;
+  #    existing users are untouched even after they adopt 2.4. Blended
+  #    retention erodes slowly as bad cohorts pile up — looks like drift,
+  #    but the cohort cut shows a sharp break, and app_version is the root
+  #    cause an analyst can actually find.
+  - type: retention
+    cohort_scope: new
+    where: {app_version: ["2.4"]}
+    start_week: 20
+    end_week: 51
+    multiplier: 0.85
+    description: "Onboarding regression: cohorts signing up on 2.4 retain worse"
+
+# -----------------------------------------------------------------------------
+# Experiments: deterministic 50/50 hash assignment; effects multiply the
+# treatment group's behaviour inside the window. Assignments are exported to
+# experiment_assignments.csv.
+# -----------------------------------------------------------------------------
+experiments:
+  # CLEAN: honest lift, no traps. Validates the analyst's method. Targets
+  # `page_shared` because every segment has headroom (a multiplier on a 0.50
+  # probability stays below 1.0, so the measurable lift is not clipped).
+  - name: share_button_redesign
+    start_week: 14
+    end_week: 26
+    assignment: {ratio: 0.5, scope: new_users}   # randomized at signup
+    effects:
+      - {type: feature, target: page_shared, multiplier: 1.15}
+    description: "Share button redesign: +15% sharing for treated new users"
+
+  # TRAPPED: a strong launch lift that decays (half-life 2 weeks). Averaging
+  # the whole window overstates the steady-state effect — the correct readout
+  # plots lift against weeks of exposure.
+  - name: ai_assist_prompt
+    start_week: 32
+    end_week: 42
+    assignment: {ratio: 0.5, scope: all_users}
+    effects:
+      - {type: feature, target: used_ai, multiplier: 1.5}
+    traps:
+      - {type: novelty, half_life_weeks: 2}
+    description: "AI assist prompt: +50% AI usage at launch, novelty decays"
+
+causality:
+  base_views: 2
+  noise_scale: 0.1
+  weights:
+    page_shared: 5.0
+    used_ai: 2.0
+    page_created: 2.0
+    created_table: 1.0
+    commented: 1.0
+
+segments:
+  casual:
+    prob: 0.50
+    retention: { plateau: 0.10, decay: 0.2 }
+    activity_distribution: { type: poisson, lambda: 0.4 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.18}, created_table: 0.05, commented: 0.03, page_shared: 0.16 }
+
+  core:
+    prob: 0.40
+    retention: { plateau: 0.50, decay: 0.1 }
+    activity_distribution: { type: normal, loc: 3, scale: 1.5 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.70}, created_table: 0.18, commented: 0.15, page_shared: 0.23 }
+
+  power:
+    prob: 0.10
+    retention: { plateau: 0.90, decay: 0.025 }
+    activity_distribution: { type: lognormal, mean: 2.5, sigma: 0.5 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 1.80}, created_table: 0.30, commented: 0.40, page_shared: 0.50 }
