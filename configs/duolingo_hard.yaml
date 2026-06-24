@@ -15,7 +15,7 @@
 #   * Early behaviour (first lessons, first 7-day streak) predicts week-N
 #     retention — feeds the activation-moment methodology on a real daily grain.
 
-dataset_name: duolingo
+dataset_name: duolingo_hard
 base_event: lesson_completed   # the core production event (one per lesson done)
 grain: daily                   # selects the per-day simulation path
 

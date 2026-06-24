@@ -6,7 +6,7 @@ Every check compares an observed statistic in the data against the value the
 config promises, with tolerances sized for ~10k users. Checks for features a
 config doesn't use (dimensions, plans, experiments) are skipped automatically.
 
-Usage:  python main.py validate output/sneaky_shocks      (exit 1 on failure)
+Usage:  python main.py validate output/notion_hard      (exit 1 on failure)
 """
 
 import math

@@ -1,13 +1,13 @@
 # =============================================================================
 # Sneaky shocks — the ADVANCED dataset
 # =============================================================================
-# Same Notion-like world as causal_shocks.yaml, but every shock is designed so
+# Same Notion-like world as notion_easy.yaml, but every shock is designed so
 # the analyst's first instinct is wrong, and two A/B experiments run on top
 # (one honest, one with a novelty trap).
 #
 # SPOILERS below — hand analysts only the events CSVs, never this file.
 
-dataset_name: notion_sneaky   # filename prefix for the analyst-facing CSVs
+dataset_name: notion_hard   # filename prefix for the analyst-facing CSVs
 
 # -----------------------------------------------------------------------------
 # Meta: editorial text for the brief / solutions (no spoilers). The task framing

@@ -64,7 +64,7 @@ The brief contains only what a real-life data team would know:
    `known_context` (especially the spoiler boundary: what the analyst is told
    exists vs. must discover), `beliefs`, and `hints`, then ask the user
    (AskUserQuestion) whether they agree or want to add/remove anything.
-   Datasets whose design is deception-based (e.g. sneaky_shocks) ALWAYS need
+   Datasets whose design is deception-based (e.g. notion_hard) ALWAYS need
    this question — how much context is "known" is the exercise's difficulty
    dial. Skip the checkpoint only if the user has already specified these
    sections for this dataset in the same conversation.

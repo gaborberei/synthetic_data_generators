@@ -9,7 +9,7 @@ its output directory — shock windows, labels, and experiments come from
 Reads only the small files (events_weekly.csv, ground truth), never the big
 event-level CSV. matplotlib / seaborn are imported lazily.
 
-Usage:  python main.py analyze output/sneaky_shocks --save
+Usage:  python main.py analyze output/notion_hard --save
 """
 
 import math

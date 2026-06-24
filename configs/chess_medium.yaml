@@ -7,7 +7,7 @@
 # noise, a one-off news spike, and Duolingo-style engagement-state retention.
 # Ported from the ChessEngagementGenerator prototype in duolingo.ipynb.
 
-dataset_name: chess_games   # filename prefix for the analyst-facing CSVs
+dataset_name: chess_medium   # filename prefix for the analyst-facing CSVs
 
 base_event: game_played     # the one event type (replaces page_created)
 # No `causality` block: no derived page-view events — game_played is all

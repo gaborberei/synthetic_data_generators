@@ -23,11 +23,11 @@ Quickstart commands below.
 
 | File / dir          | Purpose                                                       |
 |---------------------|---------------------------------------------------------------|
-| `configs/causal_shocks.yaml` | **Beginner** dataset: three obvious step-change shocks. |
-| `configs/causal_shocks_with_ab_test.yaml` | Beginner dataset plus **two honest A/B tests**, scheduled so neither overlaps the other or any shock window. |
-| `configs/sneaky_shocks.yaml` | **Advanced** dataset: every shock invites a wrong first diagnosis, plus two A/B tests (spoilers inside — don't share). |
-| `configs/chess_games.yaml` | **Single-event** dataset: a chess.com-like app emitting only `game_played`, with Duolingo-style lifecycle retention and time-series variance (seasonality, AR(1) noise, a news spike). |
-| `configs/duolingo.yaml` | **Daily-grain** dataset (`grain: daily`): a Duolingo-like language app whose core loop is the daily streak — habit-driven daily retention, streak freezes, reactivation notifications, and a notification A/B test. See "The daily grain" below. |
+| `configs/notion_easy.yaml` | **Easy** dataset: a Notion-like app with three obvious step-change shocks. |
+| `configs/notion_easy_ab.yaml` | Easy dataset plus **two honest A/B tests**, scheduled so neither overlaps the other or any shock window. |
+| `configs/notion_hard.yaml` | **Hard** dataset: every shock invites a wrong first diagnosis, plus two A/B tests (spoilers inside — don't share). |
+| `configs/chess_medium.yaml` | **Medium**, single-event dataset: a chess.com-like app emitting only `game_played`, with Duolingo-style lifecycle retention and time-series variance (seasonality, AR(1) noise, a news spike). |
+| `configs/duolingo_hard.yaml` | **Hard**, daily-grain dataset (`grain: daily`): a Duolingo-like language app whose core loop is the daily streak — habit-driven daily retention, streak freezes, reactivation notifications, and a notification A/B test. See "The daily grain" below. |
 | `generator.py`      | `CausalShockGenerator` — turns a config into events.          |
 | `challenge.py`      | Builds the analyst CSV + `dataset_brief.yaml` + `solutions.yaml` from a config. |
 | `analysis.py`       | Config-driven dashboards (cohort heatmap, 6-panel, experiments); needs `--raw`. |
@@ -41,26 +41,26 @@ pip install -r requirements.txt
 
 # Each generate writes exactly THREE files (see Outputs below), reproducible
 # from config + seed:
-python main.py generate --config configs/sneaky_shocks.yaml --seed 42   # advanced
-python main.py generate --config configs/causal_shocks.yaml --seed 42   # beginner
-python main.py generate --config configs/chess_games.yaml --seed 42     # single-event
-python main.py generate --config configs/duolingo.yaml --seed 42        # daily-grain
+python main.py generate --config configs/notion_hard.yaml --seed 42    # hard
+python main.py generate --config configs/notion_easy.yaml --seed 42    # easy
+python main.py generate --config configs/chess_medium.yaml --seed 42   # medium, single-event
+python main.py generate --config configs/duolingo_hard.yaml --seed 42  # hard, daily-grain
 
 # Add --raw to ALSO dump the event log + ground_truth files (needed only by the
 # `analyze` / `validate` commands below):
-python main.py generate --config configs/sneaky_shocks.yaml --seed 42 --raw
+python main.py generate --config configs/notion_hard.yaml --seed 42 --raw
 
 # Dashboards (PNGs written next to the data) and compliance checks — require --raw
-python main.py analyze output/sneaky_shocks --save
-python main.py validate output/sneaky_shocks
-python main.py validate output/duolingo        # runs the daily compliance suite
+python main.py analyze output/notion_hard --save
+python main.py validate output/notion_hard
+python main.py validate output/duolingo_hard        # runs the daily compliance suite
 ```
 
 ## Outputs (`output/<config name>/`)
 
 By default `generate` writes exactly **three** files per dataset — the analyst
 handoff package. The analyst CSV is prefixed with the config's `dataset_name`
-(`notion_sneaky_*`, `notion_causal_*`):
+(`notion_hard_*`, `notion_easy_*`):
 
 | File | Audience | Contents |
 |------|----------|----------|
@@ -110,24 +110,24 @@ are absolute, 0-indexed simulation weeks.
 
 ## The datasets
 
-**Beginner (`causal_shocks`)** — clearly visible on weekly charts: a marketing
+**Easy (`notion_easy`)** — clearly visible on weekly charts: a marketing
 pause (weeks 10–14), an AI outage (weeks 25–28, drags page views down
 causally), and a competitor-launch churn bump (weeks 40+).
 
-**Beginner + experiments (`causal_shocks_with_ab_test`)** — the same world
+**Easy + experiments (`notion_easy_ab`)** — the same world
 with two clean, trap-free A/B tests slotted into the shock-free gaps:
 `share_button_redesign` (weeks 15–24, `shared` ×1.15, new users) and
 `comment_prompts` (weeks 29–39, `commented` ×1.20, all users). Windows and
 target features are disjoint, so the readouts never interact; variants are in
 `*_experiment_assignments.csv` (join on `user_id`).
 
-**Advanced (`sneaky_shocks`)** — each anomaly's obvious diagnosis is wrong;
+**Hard (`notion_hard`)** — each anomaly's obvious diagnosis is wrong;
 see the YAML for full spoilers. Roughly: a data problem that looks like a
 product problem, a price change whose churn is masked by a mix shift, a cohort
 regression that looks like slow drift but has a findable root cause, plus one
 honest A/B test and one whose launch lift overstates the steady state.
 
-**Single-event (`chess_games`)** — one event type (`game_played`), so all the
+**Medium, single-event (`chess_medium`)** — one event type (`game_played`), so all the
 signal is in the time series and the lifecycle. Uses two optional engine
 modes: `transitions` swaps the plateau/decay retention curve for the Duolingo
 growth-model state machine (weekly active probability depends on the gap
@@ -173,7 +173,7 @@ seasonality/noise, and per-user variance all work exactly as in the weekly
 engine. Output is aggregated to `*_events_daily.csv` (one row per user/day/
 event_type with a count), which preserves each user's active-day calendar —
 everything streak and activation analysis needs — without an event-level log.
-`python main.py validate output/duolingo` runs a daily-specific compliance suite
+`python main.py validate output/duolingo_hard` runs a daily-specific compliance suite
 (habit curve, segment/channel retention ordering, streak/freeze/milestone
 mechanics, notification window, and the reactivation A/B readout).
 

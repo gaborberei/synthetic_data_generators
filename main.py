@@ -4,17 +4,17 @@ from __future__ import annotations
 
 Examples
 --------
-    # Generate the advanced dataset (reproducible), hide the answer key
-    python main.py generate --config configs/sneaky_shocks.yaml --seed 42 --hide-truth
+    # Generate the hard dataset (reproducible), hide the answer key
+    python main.py generate --config configs/notion_hard.yaml --seed 42 --hide-truth
 
-    # Generate the beginner dataset
-    python main.py generate --config configs/causal_shocks.yaml --seed 42
+    # Generate the easy dataset
+    python main.py generate --config configs/notion_easy.yaml --seed 42
 
     # Render the analysis dashboards for a generated dataset
-    python main.py analyze output/sneaky_shocks --save
+    python main.py analyze output/notion_hard --save
 
     # Check that the generated data matches the config it was built from
-    python main.py validate output/sneaky_shocks
+    python main.py validate output/notion_hard
 """
 
 import argparse
@@ -123,7 +123,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("generate", help="generate a dataset from a config")
-    p.add_argument("--config", default="configs/sneaky_shocks.yaml")
+    p.add_argument("--config", default="configs/notion_hard.yaml")
     p.add_argument("--output-dir", default=None,
                    help="default: output/<config name>")
     p.add_argument("--seed", type=int, default=None, help="RNG seed (reproducible)")
