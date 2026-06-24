@@ -138,7 +138,7 @@ experiments:
     description: "Share button redesign: +15% sharing for treated new users"
 
   # Weeks 29-39: between the AI crash (ends wk 28) and the competitor launch
-  # (starts wk 40). Targets `commented` (max prob 0.80 * 1.20 = 0.96 < 1).
+  # (starts wk 40). Targets `commented` (max prob 0.40 * 1.20 = 0.48 < 1).
   - name: comment_prompts
     start_week: 29
     end_week: 39
@@ -156,8 +156,9 @@ experiments:
 # behaves exactly as before):
 #   activity_weights      -> feature usage spawns EXTRA pages_created. Here AI
 #                            makes users more productive: each used_ai event
-#                            yields ~1.5 extra pages (which then drive more
-#                            page views via the page_created weight above).
+#                            contributes 0.3 extra pages (the weight below; these
+#                            then drive more page views via the page_created
+#                            weight above).
 #   marginal_page_multiplier -> those AI-spawned pages are lower-quality, so
 #                            their per-page chance of being shared/commented is
 #                            scaled down. Net effect: as pages rise, shares rise

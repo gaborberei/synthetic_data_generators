@@ -11,7 +11,7 @@ experiments — all of which you can try to detect and diagnose in the data.
 ```bash
 git clone https://github.com/gaborberei/synthetic_data_generators.git
 cd synthetic_data_generators
-pip install -r requirements.txt   # pandas, numpy, pyyaml (+ matplotlib/seaborn for --plots)
+pip install -r requirements.txt   # pandas, numpy, pyyaml (+ matplotlib/seaborn for analyze --save)
 ```
 
 Generated data lands in `output/<config name>/`, which is **gitignored** — every
@@ -108,7 +108,7 @@ deterministic hash and multiply treatment behaviour inside their window —
 optionally with traps (novelty decay, heterogeneous effects). All week indices
 are absolute, 0-indexed simulation weeks.
 
-## The two datasets
+## The datasets
 
 **Beginner (`causal_shocks`)** — clearly visible on weekly charts: a marketing
 pause (weeks 10–14), an AI outage (weeks 25–28, drags page views down
@@ -134,10 +134,11 @@ growth-model state machine (weekly active probability depends on the gap
 since last play and the previous bucket — CURR/NURR/RURR/SURR/REAC/RESU), and
 `time_series` layers annual seasonality (chess peaks in winter), AR(1)
 autocorrelated weekly noise, a one-off World Championship acquisition spike
-(week 46), and a persistent per-player engagement multiplier. The realized
-weekly multipliers are exported to `ground_truth_timeseries.csv` so `validate`
-can still check cohort sizes exactly. Timestamps span all 7 days and skew
-toward evening play.
+(week 46), and a persistent per-player engagement multiplier (exported per user
+as `activity_mult` in `ground_truth_users.csv`). The realized *weekly*
+seasonality/noise/spike multipliers are exported separately to
+`ground_truth_timeseries.csv` (with `--raw`) so `validate` can still check
+cohort sizes exactly. Timestamps span all 7 days and skew toward evening play.
 
 ## The daily grain (`grain: daily`)
 
@@ -180,7 +181,8 @@ mechanics, notification window, and the reactivation A/B readout).
 
 Change a config and re-run — user counts, growth, segments, dimensions,
 releases, plans, shock timing/strength, and experiments are all YAML. New
-shock scopes need no code: any event column works in `where:`. After any
+shock scopes need no code: any user attribute (segment, dimension, app_version,
+or plan) works in `where:`. After any
 change, `python main.py validate output/<name>` confirms the data still
 matches the config.
 

@@ -1,5 +1,5 @@
 pandas>=2.0
 numpy>=1.24
 pyyaml>=6.0
-matplotlib>=3.7   # only needed for --plots
-seaborn>=0.12     # only needed for --plots
+matplotlib>=3.7   # only needed for analyze --save
+seaborn>=0.12     # only needed for analyze --save

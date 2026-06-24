@@ -91,11 +91,10 @@ known_context:
       variant_column: <exp_... column in the CSV>
       control_label: control
       unenrolled_value: ""
-      window_abs_weeks: [<start>, <end>]
-      change: "<what was shipped/changed>"
-      target_metric: "<metric the team intended to move>"
       assignment: "<ratio, randomization unit, who was eligible>"
-    # Effect sizes were NOT communicated - measuring them is part of the task.
+      note: "Window, target metric, and effect size are NOT given — recover them from the data."
+    # Spoiler-safe: window, target metric, and effect size live in solutions.yaml,
+    # never in the analyst brief — measuring them is part of the task.
   releases:
     - "<release X shipped around week N; adoption pattern>"
   plans:

@@ -127,8 +127,9 @@ shocks:
 # behaves exactly as before):
 #   activity_weights      -> feature usage spawns EXTRA pages_created. Here AI
 #                            makes users more productive: each used_ai event
-#                            yields ~1.5 extra pages (which then drive more
-#                            page views via the page_created weight above).
+#                            contributes 0.3 extra pages (the weight below; these
+#                            then drive more page views via the page_created
+#                            weight above).
 #   marginal_page_multiplier -> those AI-spawned pages are lower-quality, so
 #                            their per-page chance of being shared/commented is
 #                            scaled down. Net effect: as pages rise, shares rise
