@@ -8,6 +8,41 @@
 
 dataset_name: notion_causal  # filename prefix for the analyst-facing CSVs
 
+# -----------------------------------------------------------------------------
+# Meta: editorial text consumed by challenge.py to write dataset_brief.yaml and
+# solutions.yaml. NONE of this is a spoiler — product/event descriptions only.
+# -----------------------------------------------------------------------------
+meta:
+  product: "A Notion-like collaborative docs app (pages, tables, comments, sharing, AI)."
+  context_level: minimal
+  description: >
+    One calendar year of product-analytics events for a growing app, aggregated
+    to weekly per-user-per-event-type counts. Users arrive over the year in
+    weekly signup cohorts. Operational and product incidents may or may not have
+    occurred during the year and may have left marks in the data — none are
+    named here. Find what the data shows.
+  events:
+    page_created: "A page/doc created. The core production action."
+    page_view: "A page viewed. The highest-volume event type."
+    used_ai: "The in-app AI feature was used."
+    created_table: "A table/database was created."
+    commented: "A comment was added."
+    page_shared: "A page was shared with someone (an output/value action)."
+  beliefs:
+    - >
+      Per-user weekly activity is heavy-tailed: most users generate a handful of
+      events while a heavy minority generate hundreds. Use medians / trimmed
+      means or log scales; means are dominated by a few users.
+  hints:
+    - "Start by aggregating to a weekly WAU and weekly new-signup series."
+    - >
+      Separate calendar-time movements from cohort-age movements: a metric can
+      sag because of a dated incident OR because older, less-retentive cohorts
+      pile up. A cohort (triangle/heatmap) view distinguishes them.
+    - >
+      For any anomaly, re-cut it by acquisition_channel, country, platform, and
+      app_version to see whether it is broad-based or concentrated.
+
 global_settings:
   base_users: 100          # new users in the first weekly cohort
   growth_rate: 0.025       # week-over-week growth in new signups (2.5%)

@@ -29,28 +29,28 @@ Quickstart commands below.
 | `configs/chess_games.yaml` | **Single-event** dataset: a chess.com-like app emitting only `game_played`, with Duolingo-style lifecycle retention and time-series variance (seasonality, AR(1) noise, a news spike). |
 | `configs/duolingo.yaml` | **Daily-grain** dataset (`grain: daily`): a Duolingo-like language app whose core loop is the daily streak — habit-driven daily retention, streak freezes, reactivation notifications, and a notification A/B test. See "The daily grain" below. |
 | `generator.py`      | `CausalShockGenerator` — turns a config into events.          |
-| `analysis.py`       | Config-driven dashboards (cohort heatmap, 6-panel, experiments). |
-| `validate.py`       | Checks generated data against the config it came from.        |
-| `main.py`           | CLI: `generate` / `analyze` / `validate`.                     |
+| `challenge.py`      | Builds the analyst CSV + `dataset_brief.yaml` + `solutions.yaml` from a config. |
+| `analysis.py`       | Config-driven dashboards (cohort heatmap, 6-panel, experiments); needs `--raw`. |
+| `validate.py`       | Checks generated data against the config it came from; needs `--raw`. |
+| `main.py`           | CLI: `generate` (3-file handoff; `--raw` for the rest) / `analyze` / `validate`. |
 
 ## Quickstart
 
 ```bash
 pip install -r requirements.txt
 
-# Advanced dataset, reproducible, answer key kept out of the events files
-python main.py generate --config configs/sneaky_shocks.yaml --seed 42 --hide-truth
+# Each generate writes exactly THREE files (see Outputs below), reproducible
+# from config + seed:
+python main.py generate --config configs/sneaky_shocks.yaml --seed 42   # advanced
+python main.py generate --config configs/causal_shocks.yaml --seed 42   # beginner
+python main.py generate --config configs/chess_games.yaml --seed 42     # single-event
+python main.py generate --config configs/duolingo.yaml --seed 42        # daily-grain
 
-# Beginner dataset
-python main.py generate --config configs/causal_shocks.yaml --seed 42
+# Add --raw to ALSO dump the event log + ground_truth files (needed only by the
+# `analyze` / `validate` commands below):
+python main.py generate --config configs/sneaky_shocks.yaml --seed 42 --raw
 
-# Single-event chess dataset
-python main.py generate --config configs/chess_games.yaml --seed 42
-
-# Daily-grain Duolingo streak dataset
-python main.py generate --config configs/duolingo.yaml --seed 42 --hide-truth
-
-# Dashboards (PNGs written next to the data) and compliance checks
+# Dashboards (PNGs written next to the data) and compliance checks — require --raw
 python main.py analyze output/sneaky_shocks --save
 python main.py validate output/sneaky_shocks
 python main.py validate output/duolingo        # runs the daily compliance suite
@@ -58,19 +58,32 @@ python main.py validate output/duolingo        # runs the daily compliance suite
 
 ## Outputs (`output/<config name>/`)
 
-Analyst-facing files are prefixed with the config's `dataset_name`
+By default `generate` writes exactly **three** files per dataset — the analyst
+handoff package. The analyst CSV is prefixed with the config's `dataset_name`
 (`notion_sneaky_*`, `notion_causal_*`):
 
 | File | Audience | Contents |
 |------|----------|----------|
-| `<name>_events.csv` | analysts | one row per event: user, timestamp, type, dimensions, app version (+ segment unless `--hide-truth`) |
-| `<name>_events_weekly.csv` | analysts | one row per (week, user, event_type) with `event_count` (weekly-grain configs) |
-| `<name>_events_daily.csv` | analysts | one row per (date, user, event_type) with `event_count` (`grain: daily` configs) |
-| `<name>_experiment_assignments.csv` | analysts | experiment, user, group, first exposed week |
-| `ground_truth_users.csv` | answer key | per user: segment, dimensions, signup plan/version, release adoption weeks |
-| `ground_truth_config.yaml` | answer key | full copy of the generating config |
+| `<name>_analyst_weekly.csv` / `_analyst_daily.csv` | analysts | the file to analyse: one row per (week\|date, user, event_type) with `event_count`, plus per-user dimensions and one `exp_<name>` column per experiment (segment is never included) |
+| `dataset_brief.yaml` | analysts | spoiler-free context: schema, grain, retention definitions, columns, the analysis tasks, and known context |
+| `solutions.yaml` | answer key | `tasks_to_find` (what to discover) + exact shock windows/magnitudes, configured **and measured** experiment readouts, hidden structure, grader checklist |
 
-To run the dataset as a whodunit, hand out only the analyst files.
+The brief and solutions are generated in code from the config (the editorial
+text lives in each config's `meta:` block). The brief validates against the
+analyst CSV via the bundled data-quality gate
+(`.claude/skills/data-quality-gate/validate.py`).
+
+To run the dataset as a whodunit, hand out only `<name>_analyst_*.csv` +
+`dataset_brief.yaml`; keep `solutions.yaml` as the answer key.
+
+### `--raw` (debugging / dashboards)
+
+`generate --raw` additionally writes the previous artifacts — the event-level
+`<name>_events.csv`, the bare `<name>_events_weekly.csv` / `_events_daily.csv`,
+`<name>_experiment_assignments.csv`, and `ground_truth_users.csv` /
+`ground_truth_config.yaml` / `ground_truth_timeseries.csv`. These are what the
+`analyze` and `validate` commands read; `--hide-truth` drops `segment` from the
+raw event CSV.
 
 ## The model in one paragraph
 

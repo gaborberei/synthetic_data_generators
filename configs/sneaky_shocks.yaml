@@ -9,6 +9,61 @@
 
 dataset_name: notion_sneaky   # filename prefix for the analyst-facing CSVs
 
+# -----------------------------------------------------------------------------
+# Meta: editorial text for the brief / solutions (no spoilers). The task framing
+# is deliberately about testing the obvious explanation against an alternative —
+# that IS the exercise, without naming any specific incident.
+# -----------------------------------------------------------------------------
+meta:
+  product: "A Notion-like collaborative docs app (pages, tables, comments, sharing, AI)."
+  context_level: minimal
+  description: >
+    One calendar year of weekly per-user-per-event-type counts for a growing
+    app. Two A/B experiments ran. Operational/product incidents may have
+    occurred and may have left marks — none are named, and several have an
+    obvious-but-wrong first reading. Establish what actually happened, with
+    evidence.
+  events:
+    page_created: "A page/doc created. The core production action."
+    page_view: "A page viewed. Highest-volume event."
+    used_ai: "The in-app AI feature was used."
+    created_table: "A table/database was created."
+    commented: "A comment was added."
+    page_shared: "A page was shared (an output/value action)."
+  task:
+    - >
+      Find any anomalies/shocks: WHEN, WHICH metric(s), MAGNITUDE, ROOT CAUSE.
+      The number and type of shocks is not given. For each candidate, test the
+      obvious explanation against an alternative before committing — a topline
+      movement may be composition, instrumentation, or a cohort effect rather
+      than the product change it first resembles.
+    - >
+      Read out each A/B experiment: recover its window, measure the lift on the
+      metric it plausibly targeted (with a CI), run an SRM check, and give a
+      ship/no-ship call. Watch for effects that are not constant over exposure.
+    - >
+      Summarize product health: growth, cohort retention, engagement mix — and
+      be explicit about blended vs within-segment comparisons.
+  beliefs:
+    - >
+      Per-user weekly activity is heavy-tailed. Use medians / log scales and
+      per-user (cluster-robust) inference.
+    - >
+      A blended (all-users) metric mixes WHO is in the population with HOW each
+      user behaves; the same number can move because of a mix shift rather than
+      a behaviour change. Confirm topline movements within a fixed sub-population.
+  hints:
+    - "Aggregate to weekly WAU and weekly new-signups first."
+    - >
+      A variant column marks WHO is enrolled and their arm across all their
+      weeks — NOT the active window. Recover the window from when the
+      treatment/control gap on the target metric opens and closes.
+    - >
+      When a topline metric moves, check (a) instrumentation vs real: cross-check
+      an independent metric the same cause should/shouldn't move; (b) composition:
+      cut by channel/country/platform; (c) cohort effect: compare signup-cohort
+      retention by app_version, not just calendar.
+
 global_settings:
   base_users: 100
   growth_rate: 0.025

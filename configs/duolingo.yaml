@@ -19,6 +19,59 @@ dataset_name: duolingo
 base_event: lesson_completed   # the core production event (one per lesson done)
 grain: daily                   # selects the per-day simulation path
 
+# -----------------------------------------------------------------------------
+# Meta: editorial text for the brief / solutions (no spoilers). Daily grain ->
+# the framing is about streak/habit dynamics on a dense daily calendar.
+# -----------------------------------------------------------------------------
+meta:
+  product: "A Duolingo-like language-learning app whose core loop is the DAILY streak."
+  context_level: minimal
+  description: >
+    One calendar year of DAILY per-user-per-event-type counts for a growing
+    language app. Users still arrive in weekly signup cohorts but are then
+    active (or not) day by day. One A/B experiment ran (variant column present).
+    The product's loop is the daily streak — habit formation, lapses, freezes,
+    and reminder notifications. Find the lifecycle dynamics and read out the test.
+  events:
+    lesson_completed: "A lesson was finished. The core action; count = lessons that day."
+    notification_sent: "A reminder notification was sent to the learner that day."
+    notification_opened: "The learner opened a reminder notification that day."
+    streak_freeze_used: "A streak freeze was auto-spent to save a streak across a missed day."
+    streak_milestone: "The learner's streak reached a milestone length that day."
+    streak_lost: "A streak (of meaningful length) was broken that day."
+  task:
+    - >
+      Recover the habit/return dynamics: does a longer current streak predict a
+      higher next-day return probability? Does breaking a streak predict churn?
+      Quantify the habit curve from the daily active calendar.
+    - >
+      Read out the A/B experiment: recover its window, measure the lift on the
+      metric it plausibly targeted (reactivation / activity) with a CI, run an
+      SRM check, and give a ship/no-ship call.
+    - >
+      Activation & retention: does early behaviour (first lessons, first 7-day
+      streak) predict week-N retention? Summarize growth, DAU/WAU, and retention
+      by cohort and by course/channel.
+  beliefs:
+    - >
+      Lessons-per-active-day is right-skewed. Prefer medians / log scales and
+      per-user inference.
+    - >
+      Retention is weekly-ish even though the loop is daily: a learner who
+      studies a few times a week misses days constantly WITHOUT churning, so do
+      not treat one missed day as churn.
+  hints:
+    - "Reconstruct each user's dense daily active calendar (zero-fill idle days) before any streak or rolling metric."
+    - >
+      For the habit curve, condition next-day return on current streak length;
+      for churn, condition on a streak break / length of idle gap.
+    - >
+      The experiment's variant column marks WHO is enrolled across all their
+      days, not the window — recover the window from when the arms diverge. The
+      likely target is reactivation; compare arms on active days/user, not just
+      raw lesson volume.
+    - "Cut retention by course and acquisition_channel; both carry real differences."
+
 global_settings:
   base_users: 110          # new learners in the first weekly signup cohort
   growth_rate: 0.015       # week-over-week growth in new signups (1.5%)

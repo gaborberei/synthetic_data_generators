@@ -10,6 +10,39 @@
 
 dataset_name: causal_shocks_with_ab_test  # filename prefix for the analyst-facing CSVs
 
+# -----------------------------------------------------------------------------
+# Meta: editorial text for the brief / solutions (no spoilers).
+# -----------------------------------------------------------------------------
+meta:
+  product: "A Notion-like collaborative docs app (pages, tables, comments, sharing, AI)."
+  context_level: minimal
+  description: >
+    One calendar year of weekly per-user-per-event-type counts for a growing
+    app. Two A/B experiments ran during the year (variant columns are present).
+    Operational/product incidents may also have occurred and may have left marks
+    — none are named here. Find what the data shows and read out the experiments.
+  events:
+    page_created: "A page/doc created. The core production action."
+    page_view: "A page viewed. Highest-volume event."
+    used_ai: "The in-app AI feature was used."
+    created_table: "A table/database was created."
+    commented: "A comment was added."
+    page_shared: "A page was shared (an output/value action)."
+  beliefs:
+    - >
+      Per-user weekly activity is heavy-tailed. Prefer medians / trimmed means /
+      log scales and cluster-robust (per-user) inference for experiment readouts.
+  hints:
+    - "Aggregate to weekly WAU and weekly new-signups first."
+    - >
+      A variant column marks WHO is enrolled and their arm across all their
+      weeks — NOT the active window. Recover each experiment's window from when
+      the treatment/control gap on its target metric opens and closes.
+    - >
+      Separate calendar-time incidents from cohort-aging with a cohort heatmap;
+      re-cut anomalies by channel/country/platform/app_version.
+    - "For a new-users-only experiment, restrict the analysis to enrolled cohorts."
+
 global_settings:
   base_users: 100          # new users in the first weekly cohort
   growth_rate: 0.025       # week-over-week growth in new signups (2.5%)

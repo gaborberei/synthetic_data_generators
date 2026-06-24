@@ -13,6 +13,49 @@ base_event: game_played     # the one event type (replaces page_created)
 # No `causality` block: no derived page-view events — game_played is all
 # there is. Volume per active week comes from activity_distribution below.
 
+# -----------------------------------------------------------------------------
+# Meta: editorial text for the brief / solutions (no spoilers). Single-event ->
+# the framing pushes the analyst to the time series + lifecycle.
+# -----------------------------------------------------------------------------
+meta:
+  product: "A chess.com-like app. Players play games; that is the only logged action."
+  context_level: minimal
+  description: >
+    One calendar year of weekly game counts for a growing chess app. Exactly one
+    event type exists (game_played), so there is no event mix to dissect — all
+    the signal is in the time series (week-over-week volume) and the player
+    lifecycle (who keeps coming back). Find the patterns and any one-off events.
+  events:
+    game_played: "A chess game was played. One row per player-week with a count of games."
+  task:
+    - >
+      Characterize the weekly activity time series: trend, any seasonality, and
+      any one-off spikes or dips (WHEN, magnitude, plausible cause). The number
+      of such events is not given.
+    - >
+      Characterize the player lifecycle: signup growth, cohort retention, and
+      reactivation of lapsed players. Early-vs-late and light-vs-heavy engagement.
+    - >
+      Use acquisition_channel / country / platform to see whether retention or
+      any spike is broad-based or concentrated.
+  beliefs:
+    - >
+      Games-per-active-week is right-skewed: most players play a few games a
+      week, a minority play dozens. Prefer medians / log scales.
+    - >
+      With only one event type, do not look for an event-mix shift; decompose
+      movements into (active players) x (games per active player), and into
+      calendar-time vs cohort-age.
+  hints:
+    - "Build a weekly WAU and weekly games series; also weekly new-signups."
+    - >
+      Decompose any volume movement into active-player count vs games-per-active-
+      player — a spike could be more players, more games each, or both.
+    - >
+      Model reactivation explicitly: players return after gaps, so a cohort
+      retention curve that ignores returns will understate engagement.
+    - "Re-cut retention and any spike by channel / country / platform."
+
 global_settings:
   base_users: 200          # new players in the first weekly cohort
   growth_rate: 0.02        # week-over-week growth in new signups (2%)

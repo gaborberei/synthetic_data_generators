@@ -55,47 +55,55 @@ def grouped_daily(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def cmd_generate(args: argparse.Namespace) -> None:
+    from challenge import build_analyst_frame, build_brief, build_solutions
+
     config = load_config(args.config)
     out_dir = Path(args.output_dir or Path("output") / Path(args.config).stem)
     out_dir.mkdir(parents=True, exist_ok=True)
+    prefix = config.get("dataset_name", Path(args.config).stem)
+    grain = config.get("grain", "weekly")
 
     print("Generating events...")
     generator = CausalShockGenerator(config, seed=args.seed)
     df = generator.run()
     print(f"  {len(df):,} events for {df['user_id'].nunique():,} users")
 
-    # Ground truth: full config copy + per-user truth (segment, dimensions,
-    # plan/version at signup). Analysts get only the prefixed files.
-    prefix = config.get("dataset_name", Path(args.config).stem)
+    # --- the three handoff artifacts (the default output) --------------------
+    analyst = build_analyst_frame(df, generator.assignments_df, config)
+    suffix = "daily" if grain == "daily" else "weekly"
+    csv_name = f"{prefix}_analyst_{suffix}.csv"
+    analyst.to_csv(out_dir / csv_name, index=False)
+    print(f"  wrote {out_dir / csv_name}  ({len(analyst):,} rows)")
+
+    with open(out_dir / "dataset_brief.yaml", "w") as f:
+        yaml.safe_dump(build_brief(config, analyst, csv_name), f, sort_keys=False)
+    with open(out_dir / "solutions.yaml", "w") as f:
+        yaml.safe_dump(
+            build_solutions(config, analyst, args.seed, csv_name), f, sort_keys=False
+        )
+    print(f"  wrote dataset_brief.yaml + solutions.yaml to {out_dir}/")
+
+    if not args.raw:
+        return
+
+    # --- raw dump (only with --raw): event log + ground truth ---------------
+    # Lets the `analyze` and `validate` commands run against this dataset.
     with open(out_dir / "ground_truth_config.yaml", "w") as f:
         yaml.safe_dump(config, f, sort_keys=False)
     generator.users_df.to_csv(out_dir / "ground_truth_users.csv", index=False)
     if generator.timeseries_df is not None:
-        # Realized weekly multipliers (seasonality * noise * spikes) — part of
-        # the answer key; validate uses them to check cohort sizes exactly.
-        generator.timeseries_df.to_csv(
-            out_dir / "ground_truth_timeseries.csv", index=False
-        )
+        generator.timeseries_df.to_csv(out_dir / "ground_truth_timeseries.csv", index=False)
     if not generator.assignments_df.empty:
         generator.assignments_df.to_csv(
             out_dir / f"{prefix}_experiment_assignments.csv", index=False
         )
-    print(f"  wrote ground truth + config to {out_dir}/")
-
     public_df = df.drop(columns=["segment"]) if args.hide_truth else df
     public_df.to_csv(out_dir / f"{prefix}_events.csv", index=False)
-    print(f"  wrote {out_dir / f'{prefix}_events.csv'}")
-    # Daily-grain configs get a daily aggregate; everything else, the weekly one.
-    if config.get("grain") == "daily":
-        grouped_daily(public_df).to_csv(
-            out_dir / f"{prefix}_events_daily.csv", index=False
-        )
-        print(f"  wrote {out_dir / f'{prefix}_events_daily.csv'}")
+    if grain == "daily":
+        grouped_daily(public_df).to_csv(out_dir / f"{prefix}_events_daily.csv", index=False)
     else:
-        grouped_weekly(public_df).to_csv(
-            out_dir / f"{prefix}_events_weekly.csv", index=False
-        )
-        print(f"  wrote {out_dir / f'{prefix}_events_weekly.csv'}")
+        grouped_weekly(public_df).to_csv(out_dir / f"{prefix}_events_weekly.csv", index=False)
+    print(f"  --raw: wrote event log + ground truth to {out_dir}/")
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
@@ -119,9 +127,13 @@ def main() -> None:
     p.add_argument("--output-dir", default=None,
                    help="default: output/<config name>")
     p.add_argument("--seed", type=int, default=None, help="RNG seed (reproducible)")
+    p.add_argument("--raw", action="store_true",
+                   help="also dump the raw event log + ground_truth files "
+                        "(needed by `analyze` / `validate`); default writes only "
+                        "the analyst CSV + dataset_brief.yaml + solutions.yaml")
     p.add_argument("--hide-truth", action="store_true",
-                   help="drop the segment column from the events CSVs "
-                        "(it stays in ground_truth_users.csv)")
+                   help="with --raw, drop the segment column from the raw events "
+                        "CSV (the analyst CSV never contains segment)")
     p.set_defaults(func=cmd_generate)
 
     p = sub.add_parser("analyze", help="render dashboards for a generated dataset")
