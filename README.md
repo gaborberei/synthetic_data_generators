@@ -92,7 +92,7 @@ Users arrive in weekly cohorts growing ~2.5%/week. Each user gets a segment
 usage), plus signup-time dimensions: acquisition channel (with real quality
 differences — referral retains best, paid worst), country, platform, plan tier
 (free/pro/team, with weekly upgrade/downgrade events), and an app version
-(new releases are adopted gradually). Both datasets carry all dimensions.
+(new releases are adopted gradually). All datasets carry all dimensions.
 **Plan tier causally drives behaviour**: pro/team users create more pages
 (×1.2 / ×1.35) and retain slightly better — on top of the compositional
 correlation (power users skew paid at signup). A good sanity exercise: paid

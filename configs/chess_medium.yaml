@@ -5,7 +5,6 @@
 # With no event mix to dissect, all the signal lives in the time series and
 # the user lifecycle: annual seasonality (chess peaks in winter), AR(1) weekly
 # noise, a one-off news spike, and Duolingo-style engagement-state retention.
-# Ported from the ChessEngagementGenerator prototype in duolingo.ipynb.
 
 dataset_name: chess_medium   # filename prefix for the analyst-facing CSVs
 
