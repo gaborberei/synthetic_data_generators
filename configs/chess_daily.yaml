@@ -1,0 +1,186 @@
+# =============================================================================
+# Chess games — the DAILY-GRAIN streak/habit dataset
+# =============================================================================
+# A chess.com-like app, ported from the weekly chess_medium config onto the
+# engine's `grain: daily` path (see generator.py::_simulate_daily). Each player
+# is stepped day by day: a day's return probability rises with the current
+# daily play-streak (habit forming) and decays with days-since-active once the
+# streak breaks. Daily-puzzle reminders nudge idle players back.
+#
+# Unlike Duolingo, chess has NO streak freeze (a missed day always breaks the
+# streak) and weekends are the BUSY days, not a dip. Everything else an analyst
+# can recover mirrors the daily methodology:
+#   * Streak length predicts next-day return (habit); a streak break predicts churn.
+#   * Early behaviour (first games, first 7-day streak) predicts week-N retention.
+#   * Annual seasonality (chess peaks in winter) plus a one-off news spike.
+#
+# Single-event world: `game_played` is the only core action, so all the signal
+# lives in the daily active calendar and the player lifecycle.
+
+dataset_name: chess_daily      # filename prefix for the analyst-facing CSVs
+base_event: game_played        # the one core event (count = games that day)
+grain: daily                   # selects the per-day simulation path
+
+# -----------------------------------------------------------------------------
+# Meta: editorial text for the brief / solutions (no spoilers). Daily grain ->
+# the framing is about streak/habit dynamics on a dense daily calendar.
+# -----------------------------------------------------------------------------
+meta:
+  product: "A chess.com-like app. Players play games; that is the only logged action, on a DAILY calendar."
+  context_level: minimal
+  description: >
+    One calendar year of DAILY per-player-per-event-type counts for a growing
+    chess app. Players arrive in weekly signup cohorts but are then active (or
+    not) day by day. Exactly one core event exists (game_played), so there is no
+    event mix to dissect — all the signal is in the daily active calendar
+    (day-over-day return), the player lifecycle (who keeps coming back), and any
+    one-off events. The product loop is the daily play-streak: habit formation,
+    lapses, and reminder notifications. Find the patterns and any one-off events.
+  events:
+    game_played: "A chess game was played. The core action; count = games that day."
+    notification_sent: "A daily-puzzle reminder was sent to an idle player that day."
+    notification_opened: "The player opened a reminder notification that day."
+    streak_milestone: "The player's daily play-streak reached a milestone length that day."
+    streak_lost: "A play-streak (of meaningful length) was broken that day."
+  task:
+    - >
+      Recover the habit/return dynamics: does a longer current daily streak
+      predict a higher next-day return probability? Does breaking a streak
+      predict churn? Quantify the habit curve from the daily active calendar.
+    - >
+      Characterize the activity time series: trend, any annual seasonality, and
+      any one-off spikes or dips (WHEN, magnitude, plausible cause). The number
+      of such events is not given.
+    - >
+      Activation & retention: does early behaviour (first games, first 7-day
+      streak) predict week-N retention? Summarize signup growth, DAU/WAU, and
+      cohort retention by acquisition_channel / country / platform.
+  beliefs:
+    - >
+      Games-per-active-day is right-skewed: most players play a game or two,
+      a minority play many. Prefer medians / log scales and per-player inference.
+    - >
+      Retention is weekly-ish even though the loop is daily: a player who plays
+      a few times a week misses days constantly WITHOUT churning, so do not
+      treat one missed day as churn.
+    - >
+      With only one event type, do not look for an event-mix shift; decompose
+      movements into (active players) x (games per active player), and into
+      calendar-time vs cohort-age.
+  hints:
+    - "Reconstruct each player's dense daily active calendar (zero-fill idle days) before any streak or rolling metric."
+    - >
+      For the habit curve, condition next-day return on current streak length;
+      for churn, condition on a streak break / length of idle gap.
+    - >
+      Decompose any volume movement into active-player count vs games-per-active-
+      player — a spike could be more players, more games each, or both.
+    - "Re-cut retention and any spike by channel / country / platform; note that weekends are the busy days."
+
+global_settings:
+  base_users: 200          # new players in the first weekly signup cohort
+  growth_rate: 0.02        # week-over-week growth in new signups (2%)
+  start_date: "2024-01-01" # first cohort (a Monday); week 0 = January = winter peak
+  periods_to_simulate: 52  # cohorts still ARRIVE weekly; each is then simulated daily
+
+# -----------------------------------------------------------------------------
+# Daily habit/return model.
+#   return.*  active-streak players: a 1-day streak returns at `new_user`, long
+#             streaks saturate toward `habit_max` at rate `habit_gain`. This is
+#             the habit curve the analyst should be able to rediscover.
+#   lapse.*   lapsed players: probability of coming back on idle day k is
+#             base * decay^(k-1), never below `floor`. Chess players drift back
+#             for puzzles and tournaments, so a short gap stays forgiving.
+#   weekday_multipliers  chess WEEKENDS are big (Sat/Sun lift), unlike Duolingo.
+# -----------------------------------------------------------------------------
+daily:
+  return:
+    new_user: 0.45         # P(play tomorrow) for a brand-new 1-day streak
+    habit_max: 0.90        # asymptotic daily return prob for a long streak
+    habit_gain: 0.05       # how fast the habit saturates with streak length
+  lapse:
+    base: 0.40             # P(return) on the first idle day after a break
+    decay: 0.80            # geometric decay per additional idle day
+    floor: 0.004           # minimum daily resurrection prob (never quite zero)
+  weekday_multipliers: [1.0, 1.0, 1.0, 1.0, 1.05, 1.15, 1.12]  # Mon..Sun: weekends UP
+
+# -----------------------------------------------------------------------------
+# Streak mechanics. Chess has NO streak freeze (omit freeze_earn_every) — a
+# missed day always breaks the streak, the cleaner habit signal.
+#   milestones         emit a `streak_milestone` event at these streak lengths.
+#   emit_lost_min_streak  only emit `streak_lost` when the broken streak was at
+#                      least this long (short streaks break silently).
+# -----------------------------------------------------------------------------
+streak:
+  milestones: [7, 14, 30, 50, 100, 200, 365]
+  emit_lost_min_streak: 3
+
+# -----------------------------------------------------------------------------
+# Notifications. A daily-puzzle reminder is sent to players idle between
+# `idle_days_trigger` and `idle_days_max` days. With prob `open_rate` it is
+# opened; an opened reminder multiplies that player's lapse return prob by
+# `reactivation_boost`. Emits `notification_sent` / `notification_opened`.
+# -----------------------------------------------------------------------------
+notifications:
+  idle_days_trigger: 1
+  idle_days_max: 14
+  open_rate: 0.25
+  reactivation_boost: 1.6
+
+# -----------------------------------------------------------------------------
+# Time-series realism. Seasonality is 1 + amp*cos(2*pi*week/52): peak at week 0
+# (January) — chess is a winter sport — trough mid-year. AR(1) noise is shared
+# across metrics so good weeks cluster; retention noise is dampened because
+# daily retention compounds hard. The World Championship spike (week 46) drives
+# a one-off surge in signups. Realized multipliers -> ground_truth_timeseries.csv.
+# -----------------------------------------------------------------------------
+time_series:
+  seasonality:
+    period_weeks: 52
+    acquisition_amp: 0.30
+    activity_amp: 0.15
+    retention_amp: 0.02
+  noise:
+    phi: 0.7
+    sigma: 0.06
+    retention_power: 0.25
+  user_variance_sigma: 0.45   # persistent lognormal per-player engagement
+  spikes:
+    - {week: 46, multiplier: 1.8, description: "World Championship coverage"}
+
+# Games skew toward the evening.
+timestamps:
+  peak_hour: 20
+
+# -----------------------------------------------------------------------------
+# Dimensions: per-player attributes at signup, written on every event.
+# Channel quality is real (referral retains best, paid worst).
+# -----------------------------------------------------------------------------
+dimensions:
+  acquisition_channel:
+    values: {organic: 0.45, paid_search: 0.20, social: 0.25, referral: 0.10}
+    retention_multiplier: {organic: 1.0, paid_search: 0.80, social: 0.85, referral: 1.15}
+  country:
+    values: {US: 0.30, IN: 0.20, RU: 0.12, DE: 0.10, BR: 0.10, UK: 0.10, PH: 0.08}
+  platform:
+    values: {web: 0.45, ios: 0.25, android: 0.30}
+
+# -----------------------------------------------------------------------------
+# Segments: how many games an active player gets through on an active day, and
+# (via retention_mult) how sticky they are. `power` players play more per day
+# AND build longer streaks, so early activity predicts retention. Lambdas are
+# per ACTIVE DAY (the weekly config's per-week lambdas scaled down to a day).
+# -----------------------------------------------------------------------------
+segments:
+  casual:
+    prob: 0.50
+    retention_mult: 0.85   # tourists: churn fast
+    activity_distribution: { type: poisson, lambda: 1.2 }
+  core:
+    prob: 0.40
+    retention_mult: 1.10   # steady weekly players
+    activity_distribution: { type: poisson, lambda: 2.5 }
+  power:
+    prob: 0.10
+    retention_mult: 1.30   # daily-habit power users
+    activity_distribution: { type: poisson, lambda: 5.0 }
