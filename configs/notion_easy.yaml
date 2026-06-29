@@ -7,6 +7,7 @@
 # notion_hard.yaml.
 
 dataset_name: notion_easy  # filename prefix for the analyst-facing CSVs
+base_event: page_shared    # the core production action (activity_distribution drives this)
 
 # -----------------------------------------------------------------------------
 # Meta: editorial text consumed by challenge.py to write dataset_brief.yaml and
@@ -22,12 +23,12 @@ meta:
     occurred during the year and may have left marks in the data — none are
     named here. Find what the data shows.
   events:
-    page_created: "A page/doc created. The core production action."
+    page_shared: "A page was shared with someone. The core production action."
     page_view: "A page viewed. The highest-volume event type."
     used_ai: "The in-app AI feature was used."
     created_table: "A table/database was created."
     commented: "A comment was added."
-    page_shared: "A page was shared with someone (an output/value action)."
+    page_created: "A page/doc created (an output/value action)."
   beliefs:
     - >
       Per-user weekly activity is heavy-tailed: most users generate a handful of
@@ -88,7 +89,7 @@ plans:
     core:   {free: 0.75, pro: 0.22, team: 0.03}
     power:  {free: 0.35, pro: 0.50, team: 0.15}
   weekly_transitions:
-    upgrade: 0.0      # plan-change EVENTS removed (page_shared is the value metric);
+    upgrade: 0.0      # plan-change EVENTS removed (page_created is the value metric);
     downgrade: 0.0    # plan multipliers above still add engagement heterogeneity
 
 # -----------------------------------------------------------------------------
@@ -125,39 +126,40 @@ shocks:
 #
 # Two extra causal edges layer on top (both optional; omit them and the model
 # behaves exactly as before):
-#   activity_weights      -> feature usage spawns EXTRA pages_created. Here AI
-#                            makes users more productive: each used_ai event
-#                            contributes 0.3 extra pages (the weight below; these
-#                            then drive more page views via the page_created
+#   activity_weights      -> feature usage spawns EXTRA shares (the base event).
+#                            Here AI makes users share more: each used_ai event
+#                            contributes 0.3 extra shares (the weight below; these
+#                            then drive more page views via the page_shared
 #                            weight above).
-#   marginal_page_multiplier -> those AI-spawned pages are lower-quality, so
-#                            their per-page chance of being shared/commented is
-#                            scaled down. Net effect: as pages rise, shares rise
-#                            SUBLINEARLY ("more pages, relatively fewer shares").
-#                            Interacts with the AI outage (wk 25-28): when AI
-#                            usage -> 0, the extra low-quality pages vanish, so
-#                            page_created/page_view dip BUT shared-per-page ticks
-#                            UP — a subtle, discoverable composition effect.
+#   marginal_page_multiplier -> those AI-spawned shares are lower-quality, so
+#                            their per-share chance of yielding a created page (or
+#                            comment) is scaled down. Net effect: as shares rise,
+#                            created pages rise SUBLINEARLY ("more shares,
+#                            relatively fewer created pages"). Interacts with the
+#                            AI outage (wk 25-28): when AI usage -> 0, the extra
+#                            low-quality shares vanish, so page_shared/page_view
+#                            dip BUT created-per-share ticks UP — a subtle,
+#                            discoverable composition effect.
 # -----------------------------------------------------------------------------
 causality:
   base_views: 2
   noise_scale: 0.1
   weights:
-    page_shared: 5.0
+    page_created: 5.0
     used_ai: 2.0
-    page_created: 2.0
+    page_shared: 2.0
     created_table: 1.0
     commented: 1.0
-  activity_weights:           # feature -> extra pages_created
+  activity_weights:           # feature -> extra shares (base event)
     used_ai: 0.3              # softened: used_ai is now a high-frequency Poisson event
-  marginal_page_multiplier:   # feature rate on AI-spawned (marginal) pages
-    page_shared: 0.5
+  marginal_page_multiplier:   # feature rate on AI-spawned (marginal) shares
+    page_created: 0.5
     commented: 0.7
 
 # -----------------------------------------------------------------------------
 # Segments: user archetypes. `prob` is the share of users in each segment.
 #   retention.plateau / decay  -> active-probability decay curve over weeks
-#   activity_distribution      -> how many pages a user creates in an active week
+#   activity_distribution      -> how many pages a user shares in an active week
 #   feature_probabilities      -> per-page chance of each feature event
 # -----------------------------------------------------------------------------
 segments:
@@ -165,16 +167,16 @@ segments:
     prob: 0.50
     retention: { plateau: 0.10, decay: 0.2 }
     activity_distribution: { type: poisson, lambda: 0.4 }
-    feature_probabilities: { used_ai: {type: poisson, lambda: 0.18}, created_table: 0.05, commented: 0.03, page_shared: 0.19 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.18}, created_table: 0.05, commented: 0.03, page_created: 0.19 }
 
   core:
     prob: 0.40
     retention: { plateau: 0.50, decay: 0.1 }
     activity_distribution: { type: normal, loc: 3, scale: 1.5 }
-    feature_probabilities: { used_ai: {type: poisson, lambda: 0.70}, created_table: 0.18, commented: 0.15, page_shared: 0.28 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.70}, created_table: 0.18, commented: 0.15, page_created: 0.28 }
 
   power:
     prob: 0.10
     retention: { plateau: 0.90, decay: 0.025 }
     activity_distribution: { type: lognormal, mean: 2.5, sigma: 0.5 }
-    feature_probabilities: { used_ai: {type: poisson, lambda: 1.80}, created_table: 0.30, commented: 0.40, page_shared: 0.60 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 1.80}, created_table: 0.30, commented: 0.40, page_created: 0.60 }
