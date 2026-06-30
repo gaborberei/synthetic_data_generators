@@ -113,6 +113,25 @@ class CausalShockGenerator:
             w = np.exp(-0.5 * dist**2 / 16) + 0.15
             self._hour_probs = w / w.sum()
 
+        # Optional within-week day-of-week placement (weekly engine). Absent ->
+        # each event falls uniformly across `timestamps.days` (legacy behavior,
+        # identical RNG stream, so other configs are byte-for-byte unchanged).
+        # Present -> the working day is drawn from a named `profile` selected per
+        # (event_type, segment); see _day_probs / _emit_week.
+        self.dow_cfg: dict | None = config.get("day_of_week")
+        self._dow_offsets: np.ndarray | None = None
+        self._dow_profiles: dict[str, np.ndarray] = {}
+        self._dow_uniform: np.ndarray | None = None
+        self._dow_cache: dict[tuple, np.ndarray] = {}
+        if self.dow_cfg:
+            day_idx = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+            days = self.dow_cfg.get("days", ["mon", "tue", "wed", "thu", "fri"])
+            self._dow_offsets = np.array([day_idx[d.lower()[:3]] for d in days], dtype=int)
+            for name, weights in (self.dow_cfg.get("profiles") or {}).items():
+                w = np.asarray(weights, dtype=float)
+                self._dow_profiles[name] = w / w.sum()
+            self._dow_uniform = np.ones(len(days)) / len(days)
+
         # Time-series realism: per-week multiplier arrays, realized once at
         # init (seed-reproducible) and exposed via `timeseries_df`.
         self.ts_acq: np.ndarray | None = None
@@ -207,6 +226,21 @@ class CausalShockGenerator:
             return int(rng.poisson(max(0.0, lam) * pages))
         return int(rng.binomial(pages, min(1.0, spec * mult)))
 
+    @staticmethod
+    def _feature_count_vec(spec, pages: np.ndarray, mult, rng) -> np.ndarray:
+        """Vectorised `_feature_count` over an array of `pages` (and `mult`).
+
+        Used by the daily engine to draw a feature's per-active-day counts for
+        all active users at once. Same two cases as the scalar version: poisson
+        (mean `lambda * mult * pages`) or per-page Bernoulli (`binomial`).
+        """
+        pages = np.asarray(pages)
+        if isinstance(spec, dict):
+            lam = float(spec.get("lambda", spec.get("lam", 0.0)))
+            return rng.poisson(np.maximum(0.0, lam * mult) * pages)
+        p = np.clip(spec * mult, 0.0, 1.0)
+        return rng.binomial(pages, p)
+
     def _sample_categorical(self, values: dict, n: int) -> np.ndarray:
         names = list(values)
         probs = np.array([values[k] for k in names], dtype=float)
@@ -232,6 +266,60 @@ class CausalShockGenerator:
             hour = int(self.rng.choice(24, p=self._hour_probs))
             seconds = hour * 3_600 + int(self.rng.integers(0, 3_600))
         return week_start + pd.Timedelta(days=days, seconds=seconds)
+
+    def _day_probs(self, event_type: str, segment: str) -> np.ndarray | None:
+        """Within-week day distribution for (event_type, segment), or None.
+
+        None when no `day_of_week` block is configured — callers then keep the
+        legacy uniform placement (identical RNG stream). Otherwise resolves
+        `assign[event_type]` (a profile name, or a `{default, <segment>}` map),
+        falling back to `assign.default`, then to a uniform profile.
+        """
+        if self.dow_cfg is None:
+            return None
+        key = (event_type, segment)
+        cached = self._dow_cache.get(key)
+        if cached is not None:
+            return cached
+        assign = self.dow_cfg.get("assign", {})
+        top = assign.get("default")
+        entry = assign.get(event_type, top)
+        if isinstance(entry, dict):
+            name = entry.get(segment) or entry.get("default") or top
+        else:
+            name = entry or top
+        probs = self._dow_profiles.get(name, self._dow_uniform)
+        self._dow_cache[key] = probs
+        return probs
+
+    def _emit_week(
+        self, uid: str, week_start: pd.Timestamp, event_type: str, n: int, segment: str
+    ) -> None:
+        """Append `n` events for one user in one week.
+
+        With no `day_of_week` block this defers to per-event `_random_timestamp`
+        (preserving the legacy RNG stream). With a block, the working day is
+        drawn in a batch from the (event_type, segment) profile and timestamps
+        are vectorised — both applying the profile and shedding the per-event
+        Python-loop cost at daily volume.
+        """
+        if n <= 0:
+            return
+        day_probs = self._day_probs(event_type, segment)
+        if day_probs is None:
+            for _ in range(n):
+                self._events.append((uid, self._random_timestamp(week_start), event_type))
+            return
+        idx = self.rng.choice(len(day_probs), size=n, p=day_probs)
+        days = self._dow_offsets[idx]
+        secs = self._day_seconds(n)
+        base = week_start.to_datetime64()
+        times = (
+            base + days.astype("timedelta64[D]") + secs.astype("timedelta64[s]")
+        ).astype("datetime64[us]").astype(object)
+        self._events.extend(
+            zip(itertools.repeat(uid), times.tolist(), itertools.repeat(event_type))
+        )
 
     # ------------------------------------------------------------------ #
     # Scoping: `where` filters, shocks, experiments
@@ -436,12 +524,26 @@ class CausalShockGenerator:
         # The daily streak/habit model is a self-contained branch; the weekly
         # loop below is left untouched for every other config.
         if self.grain == "daily":
+            # Fold plan engagement multipliers into the per-user activity /
+            # retention multipliers so paid users stay more engaged within a
+            # segment (the weekly path applies these via act_by_level/ret_by_level;
+            # the daily path has no plan loop). No plans -> no change, so
+            # chess_daily / duolingo_hard are unaffected.
+            daily_act_mult = user_act_mult
+            daily_ret_mult = user_ret_mult
+            if self.plans and plan_state is not None:
+                pm = self.plans.get("multipliers", {})
+                act_lv = np.array([pm.get("activity", {}).get(lv, 1.0) for lv in levels])
+                ret_lv = np.array([pm.get("retention", {}).get(lv, 1.0) for lv in levels])
+                pa = act_lv[plan_state]
+                daily_act_mult = pa if user_act_mult is None else user_act_mult * pa
+                daily_ret_mult = user_ret_mult * ret_lv[plan_state]
             self._simulate_daily(
                 user_ids=user_ids,
                 user_segments=user_segments,
                 dim_values=dim_values,
-                user_ret_mult=user_ret_mult,
-                user_act_mult=user_act_mult,
+                user_ret_mult=daily_ret_mult,
+                user_act_mult=daily_act_mult,
                 cohort_week=cohort_week,
                 duration_weeks=duration_weeks,
                 cohort_exp_state=cohort_exp_state,
@@ -607,13 +709,9 @@ class CausalShockGenerator:
                     plan_state[glob[up]] += 1
                     plan_state[glob[down]] -= 1
                     for uid in seg_ids[act[up]]:
-                        self._events.append(
-                            (uid, self._random_timestamp(week_start), UPGRADED)
-                        )
+                        self._emit_week(uid, week_start, UPGRADED, 1, seg_name)
                     for uid in seg_ids[act[down]]:
-                        self._events.append(
-                            (uid, self._random_timestamp(week_start), DOWNGRADED)
-                        )
+                        self._emit_week(uid, week_start, DOWNGRADED, 1, seg_name)
 
                 for j, pos in enumerate(act):
                     uid = seg_ids[pos]
@@ -654,17 +752,11 @@ class CausalShockGenerator:
                     action_counts[self.base_event] = n_pages
 
                     # 4. Emit base + feature events.
-                    for _ in range(n_pages):
-                        self._events.append(
-                            (uid, self._random_timestamp(week_start), self.base_event)
-                        )
+                    self._emit_week(uid, week_start, self.base_event, n_pages, seg_name)
                     for feat, n_feat in action_counts.items():
                         if feat == self.base_event:
                             continue
-                        for _ in range(n_feat):
-                            self._events.append(
-                                (uid, self._random_timestamp(week_start), feat)
-                            )
+                        self._emit_week(uid, week_start, feat, n_feat, seg_name)
 
                     # 5. Causal page views: driven by the (amplified) actions.
                     if causality is not None:
@@ -675,10 +767,7 @@ class CausalShockGenerator:
                         n_views = max(
                             1, int((base_views + weighted) * rng.normal(1.0, noise))
                         )
-                        for _ in range(n_views):
-                            self._events.append(
-                                (uid, self._random_timestamp(week_start), PAGE_VIEW)
-                            )
+                        self._emit_week(uid, week_start, PAGE_VIEW, n_views, seg_name)
 
     # ------------------------------------------------------------------ #
     # Daily simulation path (grain: daily) — streak / habit products
@@ -759,7 +848,21 @@ class CausalShockGenerator:
         lap_base = lap.get("base", 0.15)
         lap_decay = lap.get("decay", 0.5)
         lap_floor = lap.get("floor", 0.0)
-        weekday_mult = self.daily_cfg.get("weekday_multipliers")
+        # weekday_multipliers may be a single list (global, the chess/duolingo
+        # case) OR a {segment: list} map — resolved per segment below.
+        weekday_cfg = self.daily_cfg.get("weekday_multipliers")
+
+        # Causal event-mix edges (same as the weekly engine), applied per active
+        # day. With no `feature_probabilities` and no `causality` block the day
+        # stays single-event — identical to before (chess_daily, duolingo_hard).
+        causality = self.causality
+        weights = causality["weights"] if causality else {}
+        base_views = causality["base_views"] if causality else 0
+        noise = causality["noise_scale"] if causality else 0.0
+        activity_weights = causality.get("activity_weights", {}) if causality else {}
+        marginal_page_mult = (
+            causality.get("marginal_page_multiplier", {}) if causality else {}
+        )
 
         freeze_every = self.streak_cfg.get("freeze_earn_every", 0)
         max_freezes = self.streak_cfg.get("max_freezes", 0)
@@ -782,6 +885,12 @@ class CausalShockGenerator:
                 continue
             seg = self.segments[seg_name]
             sample_lessons = self._activity_sampler(seg["activity_distribution"])
+            feat_probs = seg.get("feature_probabilities", {})
+            # Per-segment weekday rhythm (different user groups, different days).
+            if isinstance(weekday_cfg, dict):
+                seg_weekday = weekday_cfg.get(seg_name, weekday_cfg.get("default"))
+            else:
+                seg_weekday = weekday_cfg
             # Optional per-segment stickiness: committed learners retain better,
             # so early activity (which tracks segment) predicts retention — the
             # signal the activation methodology is meant to recover.
@@ -838,8 +947,8 @@ class CausalShockGenerator:
                     )
                     if self.ts_ret is not None:
                         p_today = p_today * self.ts_ret[abs_week]
-                    if weekday_mult is not None:
-                        p_today = p_today * weekday_mult[day_start.weekday()]
+                    if seg_weekday is not None:
+                        p_today = p_today * seg_weekday[day_start.weekday()]
                     active = rng.random(n) < np.minimum(p_today, 0.99)
 
                 inactive = ~active
@@ -889,7 +998,76 @@ class CausalShockGenerator:
                 scaled = lessons * a_mult
                 floor = np.floor(scaled).astype(int)
                 counts = np.maximum(1, floor + (rng.random(len(act)) < scaled - floor))
-                self._emit_daily(seg_ids[act], day_start, self.base_event, counts)
+
+                # Single-event day (chess/duolingo): emit the base event and stop
+                # — no extra RNG draws, so those datasets are byte-for-byte stable.
+                if not feat_probs and causality is None:
+                    self._emit_daily(seg_ids[act], day_start, self.base_event, counts)
+                    continue
+
+                # --- Full event mix + causal page views on this active day, the
+                #     vectorised analogue of the weekly engine's per-user block. ---
+                n_act = len(act)
+                feat_mult = {
+                    feat: self._shock_vec(
+                        "feature", abs_week, cohort_week, act_attrs, n_act, target=feat
+                    )
+                    * self._experiment_vec(
+                        "feature", abs_week, act_exp, seg_name, n_act, target=feat
+                    )
+                    for feat in feat_probs
+                }
+
+                # 1. Features on the BASE events at the full per-event rate.
+                base_feat = {
+                    feat: self._feature_count_vec(prob, counts, feat_mult[feat], rng)
+                    for feat, prob in feat_probs.items()
+                }
+
+                # 2. Causal edge: feature usage spawns EXTRA base events (e.g.
+                #    used_ai -> more shares). Stochastic rounding stays unbiased.
+                if activity_weights:
+                    extra = np.zeros(n_act, dtype=float)
+                    for f, w in activity_weights.items():
+                        extra = extra + base_feat.get(f, 0) * w
+                    extra_floor = np.floor(extra).astype(int)
+                    extra_pages = extra_floor + (rng.random(n_act) < extra - extra_floor)
+                else:
+                    extra_pages = np.zeros(n_act, dtype=int)
+
+                # 3. Features on the EXTRA events at a DILUTED rate (the spawned
+                #    events are lower-quality — marginal_page_multiplier).
+                action_counts = {}
+                for feat, prob in feat_probs.items():
+                    n_extra = self._feature_count_vec(
+                        prob,
+                        extra_pages,
+                        feat_mult[feat] * marginal_page_mult.get(feat, 1.0),
+                        rng,
+                    )
+                    action_counts[feat] = base_feat[feat] + n_extra
+
+                total_base = counts + extra_pages
+                action_counts[self.base_event] = total_base
+
+                # 4. Emit base + feature events for the active users.
+                self._emit_daily(seg_ids[act], day_start, self.base_event, total_base)
+                for feat, fc in action_counts.items():
+                    if feat == self.base_event:
+                        continue
+                    self._emit_daily(seg_ids[act], day_start, feat, fc)
+
+                # 5. Causal page views, driven by the (amplified) actions.
+                if causality is not None:
+                    weighted = np.zeros(n_act)
+                    for action, cnt in action_counts.items():
+                        w = weights.get(action, 0)
+                        if w:
+                            weighted = weighted + cnt * w
+                    views = np.maximum(
+                        1, ((base_views + weighted) * rng.normal(1.0, noise, n_act)).astype(int)
+                    )
+                    self._emit_daily(seg_ids[act], day_start, PAGE_VIEW, views)
 
     # ------------------------------------------------------------------ #
     # Run + post-processing

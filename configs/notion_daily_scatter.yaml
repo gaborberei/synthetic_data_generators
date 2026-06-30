@@ -1,0 +1,192 @@
+# =============================================================================
+# Notion daily — the "SCATTER" daily dataset (weekly engine, daily output)
+# =============================================================================
+# A daily-grain rendering of notion_easy that keeps the WEEKLY simulation engine
+# (multi-event mix, causality, plans, the three shocks) and only changes WHICH
+# working day each event lands on, via a per-event / per-segment day-of-week
+# distribution. The output is then aggregated to a DAILY calendar.
+#
+# What this dataset has: realistic intra-week / day-of-week structure that
+# differs by event type and user group, the full notion event mix, causal page
+# views, and the same three shocks as notion_easy.
+# What it does NOT have: a real day-over-day streak/habit signal. Activity is
+# decided weekly and only scattered across days, so any "streak" an analyst
+# builds from the daily calendar predicts nothing. For the real streak dataset,
+# see notion_daily_streak.yaml — the two exist to be compared.
+
+dataset_name: notion_daily_scatter  # filename prefix for the analyst-facing CSVs
+base_event: page_shared             # the core production action (activity_distribution drives this)
+output_grain: daily                 # weekly ENGINE, but emit a DAILY analyst frame
+
+# -----------------------------------------------------------------------------
+# Day-of-week placement (weekly engine). Each event's working day (Mon-Fri) is
+# drawn from a named `profile`, selected per (event_type, segment) via `assign`.
+# A profile is a weight vector over `days`; `assign` entries are a profile name
+# or a {default, <segment>} map. Unlisted (event, segment) -> assign.default.
+# -----------------------------------------------------------------------------
+day_of_week:
+  days: [mon, tue, wed, thu, fri]
+  profiles:
+    flat:  [1.0, 1.0, 1.0, 1.0, 1.0]   # no day-of-week preference
+    front: [1.4, 1.2, 1.0, 0.8, 0.6]   # early-week heavy (Mon peak)
+    back:  [0.6, 0.8, 1.0, 1.2, 1.4]   # late-week heavy (Fri peak)
+    mid:   [0.8, 1.1, 1.3, 1.1, 0.8]   # midweek peak (Wed)
+  assign:
+    default: flat
+    page_shared:   {default: mid,  casual: front}  # core action; casual front-loads
+    page_view:     {default: back, power: flat}    # views accrue later; power steady
+    used_ai:       {default: front}                # drafting/planning early week
+    created_table: {default: front}
+    commented:     {default: back}                 # discussion later in the week
+    page_created:  {default: flat}
+
+# -----------------------------------------------------------------------------
+# Meta: editorial text consumed by challenge.py to write dataset_brief.yaml and
+# solutions.yaml. NONE of this is a spoiler — product/event descriptions only.
+# -----------------------------------------------------------------------------
+meta:
+  product: "A Notion-like collaborative docs app (pages, tables, comments, sharing, AI)."
+  context_level: minimal
+  description: >
+    One calendar year of product-analytics events for a growing app, aggregated
+    to DAILY per-user-per-event-type counts. Users arrive over the year in weekly
+    signup cohorts and are active on working days (Mon-Fri). Operational and
+    product incidents may or may not have occurred during the year and may have
+    left marks in the data — none are named here. Find what the data shows.
+  events:
+    page_shared: "A page was shared with someone. The core production action."
+    page_view: "A page viewed. The highest-volume event type."
+    used_ai: "The in-app AI feature was used."
+    created_table: "A table/database was created."
+    commented: "A comment was added."
+    page_created: "A page/doc created (an output/value action)."
+  beliefs:
+    - >
+      Per-user activity is heavy-tailed: most users generate a handful of events
+      while a heavy minority generate hundreds. Use medians / trimmed means or
+      log scales; means are dominated by a few users.
+  hints:
+    - "Roll up to weekly WAU and weekly new-signups; also look at the day-of-week profile by event type and segment."
+    - >
+      Separate calendar-time movements from cohort-age movements: a metric can
+      sag because of a dated incident OR because older, less-retentive cohorts
+      pile up. A cohort (triangle/heatmap) view distinguishes them.
+    - >
+      For any anomaly, re-cut it by acquisition_channel, country, platform, and
+      app_version to see whether it is broad-based or concentrated.
+
+global_settings:
+  base_users: 100          # new users in the first weekly cohort
+  growth_rate: 0.025       # week-over-week growth in new signups (2.5%)
+  start_date: "2024-01-01" # first cohort date (a Monday)
+  periods_to_simulate: 52  # number of weekly cohorts
+
+# -----------------------------------------------------------------------------
+# Dimensions: per-user categorical attributes assigned at signup, written as
+# columns on every event. `retention_multiplier` makes channel quality real
+# (referral users retain best, paid worst).
+# -----------------------------------------------------------------------------
+dimensions:
+  acquisition_channel:
+    values: {organic: 0.40, paid_search: 0.30, social: 0.20, referral: 0.10}
+    retention_multiplier: {organic: 1.0, paid_search: 0.80, social: 0.85, referral: 1.15}
+  country:
+    values: {US: 0.40, DE: 0.15, UK: 0.12, IN: 0.18, BR: 0.15}
+  platform:
+    values: {web: 0.50, ios: 0.30, android: 0.20}
+
+# -----------------------------------------------------------------------------
+# Releases: app versions adopted gradually; here purely a column.
+# -----------------------------------------------------------------------------
+releases:
+  adoption_rate: 0.30
+  versions:
+    - {version: "2.3", week: 0}
+    - {version: "2.4", week: 20}
+
+# -----------------------------------------------------------------------------
+# Plans: tier assigned at signup (per segment); paying users are causally more
+# engaged via the multipliers — visible when comparing paid vs free WITHIN a
+# segment. Plan-change EVENTS are disabled (page_created is the value metric).
+# -----------------------------------------------------------------------------
+plans:
+  levels: [free, pro, team]
+  multipliers:
+    activity:  {free: 1.0, pro: 1.20, team: 1.35}
+    retention: {free: 1.0, pro: 1.05, team: 1.35}
+  signup_distribution:
+    casual: {free: 0.97, pro: 0.03, team: 0.00}
+    core:   {free: 0.75, pro: 0.22, team: 0.03}
+    power:  {free: 0.35, pro: 0.50, team: 0.15}
+  weekly_transitions:
+    upgrade: 0.0
+    downgrade: 0.0
+
+# -----------------------------------------------------------------------------
+# Shocks: time-boxed events that scale some behaviour by `multiplier`.
+# `start_week` / `end_week` are absolute, 0-indexed simulation weeks.
+# -----------------------------------------------------------------------------
+shocks:
+  - type: acquisition
+    start_week: 10
+    end_week: 14
+    multiplier: 0.4
+    description: "Marketing Paused (Weeks 10-14)"
+
+  - type: feature
+    target_feature: used_ai
+    start_week: 25
+    end_week: 28
+    multiplier: 0.0
+    description: "AI Server Crash (Zero Usage Wk 25-28)"
+
+  - type: retention
+    start_week: 40
+    end_week: 52
+    multiplier: 0.7
+    description: "Competitor Launch (High Churn Wk 40+)"
+
+# -----------------------------------------------------------------------------
+# Causality: page views are a function of the actions a user took that week.
+# Identical to notion_easy — AI spawns extra shares (activity_weights), those
+# marginal shares yield relatively fewer created pages (marginal_page_multiplier),
+# and the AI outage flips the created-per-share composition.
+# -----------------------------------------------------------------------------
+causality:
+  base_views: 2
+  noise_scale: 0.1
+  weights:
+    page_created: 5.0
+    used_ai: 2.0
+    page_shared: 2.0
+    created_table: 1.0
+    commented: 1.0
+  activity_weights:
+    used_ai: 0.3
+  marginal_page_multiplier:
+    page_created: 0.5
+    commented: 0.7
+
+# -----------------------------------------------------------------------------
+# Segments: user archetypes. Identical to notion_easy (weekly engine).
+#   activity_distribution -> how many pages a user shares in an active week
+#   feature_probabilities -> per-share chance of each feature event
+# -----------------------------------------------------------------------------
+segments:
+  casual:
+    prob: 0.50
+    retention: { plateau: 0.10, decay: 0.2 }
+    activity_distribution: { type: poisson, lambda: 0.4 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.18}, created_table: 0.05, commented: 0.03, page_created: 0.19 }
+
+  core:
+    prob: 0.40
+    retention: { plateau: 0.50, decay: 0.1 }
+    activity_distribution: { type: normal, loc: 3, scale: 1.5 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.70}, created_table: 0.18, commented: 0.15, page_created: 0.28 }
+
+  power:
+    prob: 0.10
+    retention: { plateau: 0.90, decay: 0.025 }
+    activity_distribution: { type: lognormal, mean: 2.5, sigma: 0.5 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 1.80}, created_table: 0.30, commented: 0.40, page_created: 0.60 }
