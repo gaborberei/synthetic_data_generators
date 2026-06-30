@@ -115,12 +115,14 @@ def _abs_week(series: pd.Series, config: dict) -> pd.Series:
     return ((pd.to_datetime(series) - _start_monday(config)).dt.days // 7).astype(int)
 
 
-def _retention_metric(grain: str) -> dict:
+def _retention_metric(grain: str, base_event: str) -> dict:
     if grain == "daily":
         return {
             "activity_definition": (
-                "A user is ACTIVE on a day if they have a core-action row that day. "
-                "notification_*/streak_* rows describe the day; the core action is the substantive activity."
+                f"A user is ACTIVE on a day if they have a '{base_event}' row that day. "
+                f"'{base_event}' is the single source of truth for activity: every active day "
+                "emits exactly one such row. notification_*/streak_* rows describe the day but do "
+                "NOT by themselves make a user active (they can fire on idle days)."
             ),
             "cohort_definition": (
                 "Signup cohort = first active day (min date), optionally rolled up to the weekly "
@@ -135,12 +137,17 @@ def _retention_metric(grain: str) -> dict:
                 "central), so model returns explicitly and compute cells independently."
             ),
             "weekly_active_users": (
-                "DAU = distinct users active on a day; WAU = distinct users active in a calendar "
-                "week. The daily/weekly ratio is itself a habit signal."
+                f"DAU = distinct users with a '{base_event}' row on a day; WAU = distinct users "
+                f"with a '{base_event}' row in a calendar week. The daily/weekly ratio is itself a "
+                "habit signal."
             ),
         }
     return {
-        "activity_definition": "A user is ACTIVE in a week if they have at least one row (any event_type) that week.",
+        "activity_definition": (
+            f"A user is ACTIVE in a week if they have a '{base_event}' row that week. "
+            f"'{base_event}' is the single source of truth for activity: every active week emits "
+            "exactly one such row, and other event types are optional add-ons on top of it."
+        ),
         "cohort_definition": "Signup cohort = first active week (min week). First active week = signup week.",
         "retention_rate": (
             "Classic N-week retention: fraction of a cohort active exactly N weeks after signup; "
@@ -150,7 +157,7 @@ def _retention_metric(grain: str) -> dict:
             "Churn = absence in a week; users MAY return, so compute each retention cell "
             "independently rather than as a survival product."
         ),
-        "weekly_active_users": "WAU = count of distinct user_ids with at least one row in the week.",
+        "weekly_active_users": f"WAU = count of distinct user_ids with a '{base_event}' row in the week.",
     }
 
 
@@ -323,7 +330,7 @@ def build_brief(config: dict, df: pd.DataFrame, csv_name: str) -> dict:
         "dataset": dataset,
         "task": meta.get("task", _default_task(bool(experiments))),
         "grain": _grain_text(out_grain, grain),
-        "retention_metric": _retention_metric(grain),
+        "retention_metric": _retention_metric(grain, base_event),
         "time_coverage": time_coverage,
         "columns": columns,
         "known_context": known,
