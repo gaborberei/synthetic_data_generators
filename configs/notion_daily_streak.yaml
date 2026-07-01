@@ -1,0 +1,225 @@
+# =============================================================================
+# Notion daily — the "STREAK" daily dataset (daily engine, full event mix)
+# =============================================================================
+# A daily-grain rendering of notion_easy on the engine's `grain: daily` streak/
+# habit path. Each user is stepped day by day: the daily return probability rises
+# with the current consecutive-day streak (habit forming) and decays with days-
+# since-active once it breaks. UNLIKE chess/duolingo, every active day also emits
+# notion's full event mix (used_ai, created_table, commented, page_created) and
+# causal page_views — so the dataset keeps notion's identity AND gains a real,
+# recoverable streak signal.
+#
+# What this dataset has (and the "scatter" sibling does not): genuine day-over-day
+# dependence — a longer current streak predicts a higher next-day return, a streak
+# break predicts churn, and early behaviour predicts week-N retention. Day-of-week
+# structure here comes from WHICH days a segment is active (per-segment weekday
+# rhythms), not from per-event scatter. Compare against notion_daily_scatter.yaml.
+
+dataset_name: notion_daily_streak  # filename prefix for the analyst-facing CSVs
+base_event: page_shared            # the core production action (count = shares that day)
+grain: daily                       # selects the per-day streak/habit engine
+
+# -----------------------------------------------------------------------------
+# Meta: editorial text for the brief / solutions (no spoilers).
+# -----------------------------------------------------------------------------
+meta:
+  product: "A Notion-like collaborative docs app. Users share/create pages, comment, build tables, use AI — on a DAILY calendar."
+  context_level: minimal
+  description: >
+    One calendar year of DAILY per-user-per-event-type counts for a growing app.
+    Users arrive in weekly signup cohorts but are then active (or not) day by day.
+    The product loop is a daily habit: returning users build a streak, lapses
+    decay, and reminders nudge idle users back. On each active day a user emits
+    the full event mix (shares, AI, tables, comments, created pages) plus derived
+    page views. Operational and product incidents may or may not have occurred.
+    Find the habit dynamics, the event-mix structure, and any one-off events.
+  events:
+    page_shared: "A page was shared. The core production action; count = shares that day."
+    page_view: "A page viewed. The highest-volume event type (derived from the day's actions)."
+    used_ai: "The in-app AI feature was used."
+    created_table: "A table/database was created."
+    commented: "A comment was added."
+    page_created: "A page/doc created (an output/value action)."
+    notification_sent: "A reminder was sent to an idle user that day."
+    notification_opened: "The user opened a reminder that day."
+    streak_milestone: "The user's daily activity streak reached a milestone length that day."
+    streak_lost: "A streak (of meaningful length) was broken that day."
+  beliefs:
+    - >
+      Per-active-day activity is heavy-tailed: most users do a little, a minority
+      a lot. Prefer medians / log scales and per-user inference.
+    - >
+      Retention is weekly-ish even though the loop is daily: a user active a few
+      times a week misses days constantly WITHOUT churning, so do not treat one
+      missed day as churn.
+  hints:
+    - "Reconstruct each user's dense daily active calendar (zero-fill idle days) before any streak or rolling metric."
+    - >
+      For the habit curve, condition next-day return on current streak length;
+      for churn, condition on a streak break / idle-gap length.
+    - >
+      Decompose any volume movement into active-user count vs events-per-active-
+      user, and into calendar-time vs cohort-age. Re-cut by channel / country /
+      platform; note weekends are quiet (a work app) and differ by user group.
+
+global_settings:
+  base_users: 100          # new users in the first weekly cohort
+  growth_rate: 0.025       # week-over-week growth in new signups (2.5%)
+  start_date: "2024-01-01" # first cohort date (a Monday)
+  periods_to_simulate: 52  # cohorts still ARRIVE weekly; each is then simulated daily
+
+# -----------------------------------------------------------------------------
+# Daily habit/return model.
+#   return.*  active-streak users: a 1-day streak returns at `new_user`, long
+#             streaks saturate toward `habit_max` at rate `habit_gain` — the
+#             habit curve the analyst should recover.
+#   lapse.*   lapsed users: P(return) on idle day k = base * decay^(k-1), never
+#             below `floor`.
+#   weekday_multipliers  PER-SEGMENT weekday rhythms (Mon..Sun). A work app:
+#             weekends are quiet, and power users work through them more than
+#             casual users do.
+# -----------------------------------------------------------------------------
+daily:
+  return:
+    new_user: 0.30         # P(active tomorrow) for a brand-new 1-day streak
+    habit_max: 0.85        # asymptotic daily return prob for a long streak
+    habit_gain: 0.06       # how fast the habit saturates with streak length
+  lapse:
+    base: 0.18             # P(return) on the first idle day after a break
+    decay: 0.70            # geometric decay per additional idle day
+    floor: 0.002           # minimum daily resurrection prob
+  weekday_multipliers:     # Mon, Tue, Wed, Thu, Fri, Sat, Sun
+    casual: [1.0, 1.0, 1.0, 1.0, 0.9, 0.20, 0.20]   # weekday-only tourists
+    core:   [1.0, 1.0, 1.0, 1.0, 0.95, 0.40, 0.40]  # mostly weekdays
+    power:  [1.0, 1.0, 1.0, 1.0, 1.0, 0.80, 0.80]   # power users work weekends too
+
+# -----------------------------------------------------------------------------
+# Streak mechanics. No streak freeze (a missed day always breaks the streak).
+#   milestones            emit a `streak_milestone` event at these lengths.
+#   emit_lost_min_streak  only emit `streak_lost` when the broken streak was at
+#                         least this long (short streaks break silently).
+# -----------------------------------------------------------------------------
+streak:
+  milestones: [7, 14, 30, 60, 100, 200, 365]
+  emit_lost_min_streak: 3
+
+# -----------------------------------------------------------------------------
+# Notifications: a reminder is sent to users idle between `idle_days_trigger` and
+# `idle_days_max` days. With prob `open_rate` it is opened; an opened reminder
+# multiplies that user's lapse return prob by `reactivation_boost`.
+# -----------------------------------------------------------------------------
+notifications:
+  idle_days_trigger: 2
+  idle_days_max: 21
+  open_rate: 0.20
+  reactivation_boost: 1.5
+
+# Sharing skews toward working hours.
+timestamps:
+  peak_hour: 14
+
+# -----------------------------------------------------------------------------
+# Dimensions: per-user attributes at signup, written on every event.
+# -----------------------------------------------------------------------------
+dimensions:
+  acquisition_channel:
+    values: {organic: 0.40, paid_search: 0.30, social: 0.20, referral: 0.10}
+    retention_multiplier: {organic: 1.0, paid_search: 0.80, social: 0.85, referral: 1.15}
+  country:
+    values: {US: 0.40, DE: 0.15, UK: 0.12, IN: 0.18, BR: 0.15}
+  platform:
+    values: {web: 0.50, ios: 0.30, android: 0.20}
+
+releases:
+  adoption_rate: 0.30
+  versions:
+    - {version: "2.3", week: 0}
+    - {version: "2.4", week: 20}
+
+# -----------------------------------------------------------------------------
+# Plans: tier at signup; paying users are more engaged (the daily engine folds
+# these activity/retention multipliers into each user's per-day behaviour).
+# -----------------------------------------------------------------------------
+plans:
+  levels: [free, pro, team]
+  multipliers:
+    activity:  {free: 1.0, pro: 1.20, team: 1.35}
+    retention: {free: 1.0, pro: 1.05, team: 1.35}
+  signup_distribution:
+    casual: {free: 0.97, pro: 0.03, team: 0.00}
+    core:   {free: 0.75, pro: 0.22, team: 0.03}
+    power:  {free: 0.35, pro: 0.50, team: 0.15}
+  weekly_transitions:
+    upgrade: 0.0
+    downgrade: 0.0
+
+# -----------------------------------------------------------------------------
+# Shocks: same three as notion_easy. acquisition + retention are event-agnostic;
+# the feature shock zeroes used_ai (and ripples through causality) wk 25-28.
+# -----------------------------------------------------------------------------
+shocks:
+  - type: acquisition
+    start_week: 10
+    end_week: 14
+    multiplier: 0.4
+    description: "Marketing Paused (Weeks 10-14)"
+
+  - type: feature
+    target_feature: used_ai
+    start_week: 25
+    end_week: 28
+    multiplier: 0.0
+    description: "AI Server Crash (Zero Usage Wk 25-28)"
+
+  - type: retention
+    start_week: 40
+    end_week: 52
+    multiplier: 0.7
+    description: "Competitor Launch (High Churn Wk 40+)"
+
+# -----------------------------------------------------------------------------
+# Causality (applied PER ACTIVE DAY now): page_views ≈ (base_views + Σ action *
+# weight) * noise. AI spawns extra shares (activity_weights); those marginal
+# shares yield relatively fewer created pages (marginal_page_multiplier); the AI
+# outage flips the created-per-share composition. Same edges as notion_easy.
+# -----------------------------------------------------------------------------
+causality:
+  base_views: 2
+  noise_scale: 0.1
+  weights:
+    page_created: 5.0
+    used_ai: 2.0
+    page_shared: 2.0
+    created_table: 1.0
+    commented: 1.0
+  activity_weights:
+    used_ai: 0.3
+  marginal_page_multiplier:
+    page_created: 0.5
+    commented: 0.7
+
+# -----------------------------------------------------------------------------
+# Segments: daily-engine form.
+#   retention_mult        per-segment daily stickiness (early behaviour -> week-N
+#                         retention; power builds longer streaks).
+#   activity_distribution shares per ACTIVE DAY (per-week lambdas scaled down).
+#   feature_probabilities per-share chance of each feature event (unchanged).
+# -----------------------------------------------------------------------------
+segments:
+  casual:
+    prob: 0.50
+    retention_mult: 0.80
+    activity_distribution: { type: poisson, lambda: 0.6 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.18}, created_table: 0.05, commented: 0.03, page_created: 0.19 }
+
+  core:
+    prob: 0.40
+    retention_mult: 1.05
+    activity_distribution: { type: poisson, lambda: 1.5 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 0.70}, created_table: 0.18, commented: 0.15, page_created: 0.28 }
+
+  power:
+    prob: 0.10
+    retention_mult: 1.25
+    activity_distribution: { type: lognormal, mean: 1.2, sigma: 0.6 }
+    feature_probabilities: { used_ai: {type: poisson, lambda: 1.80}, created_table: 0.30, commented: 0.40, page_created: 0.60 }

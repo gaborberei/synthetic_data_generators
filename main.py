@@ -61,7 +61,9 @@ def cmd_generate(args: argparse.Namespace) -> None:
     out_dir = Path(args.output_dir or Path("output") / Path(args.config).stem)
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = config.get("dataset_name", Path(args.config).stem)
-    grain = config.get("grain", "weekly")
+    # Output grain (filename suffix + raw dump) may differ from the engine grain:
+    # a weekly-engine config can set output_grain: daily (day-of-week placement).
+    grain = config.get("output_grain", config.get("grain", "weekly"))
 
     print("Generating events...")
     generator = CausalShockGenerator(config, seed=args.seed)

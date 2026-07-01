@@ -47,7 +47,7 @@ def build_analyst_frame(
     dimensions; keeps ``app_version`` per (user, period); pivots experiment
     assignments into ``exp_<name>`` columns (blank = unenrolled).
     """
-    grain = config.get("grain", "weekly")
+    grain = _output_grain(config)
     period = "date" if grain == "daily" else "week"
 
     agg = (
@@ -86,6 +86,16 @@ def _period_col(grain: str) -> str:
     return "date" if grain == "daily" else "week"
 
 
+def _output_grain(config: dict) -> str:
+    """Aggregation/output grain, decoupled from the engine `grain`.
+
+    Defaults to the engine grain, but a weekly-engine config can set
+    `output_grain: daily` to emit daily rows (per-event day-of-week placement)
+    while keeping the weekly simulation — see generator.py `day_of_week`.
+    """
+    return config.get("output_grain", config.get("grain", "weekly"))
+
+
 def _exp_cols(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if c.startswith("exp_")]
 
@@ -105,12 +115,14 @@ def _abs_week(series: pd.Series, config: dict) -> pd.Series:
     return ((pd.to_datetime(series) - _start_monday(config)).dt.days // 7).astype(int)
 
 
-def _retention_metric(grain: str) -> dict:
+def _retention_metric(grain: str, base_event: str) -> dict:
     if grain == "daily":
         return {
             "activity_definition": (
-                "A user is ACTIVE on a day if they have a core-action row that day. "
-                "notification_*/streak_* rows describe the day; the core action is the substantive activity."
+                f"A user is ACTIVE on a day if they have a '{base_event}' row that day. "
+                f"'{base_event}' is the single source of truth for activity: every active day "
+                "emits exactly one such row. notification_*/streak_* rows describe the day but do "
+                "NOT by themselves make a user active (they can fire on idle days)."
             ),
             "cohort_definition": (
                 "Signup cohort = first active day (min date), optionally rolled up to the weekly "
@@ -125,12 +137,17 @@ def _retention_metric(grain: str) -> dict:
                 "central), so model returns explicitly and compute cells independently."
             ),
             "weekly_active_users": (
-                "DAU = distinct users active on a day; WAU = distinct users active in a calendar "
-                "week. The daily/weekly ratio is itself a habit signal."
+                f"DAU = distinct users with a '{base_event}' row on a day; WAU = distinct users "
+                f"with a '{base_event}' row in a calendar week. The daily/weekly ratio is itself a "
+                "habit signal."
             ),
         }
     return {
-        "activity_definition": "A user is ACTIVE in a week if they have at least one row (any event_type) that week.",
+        "activity_definition": (
+            f"A user is ACTIVE in a week if they have a '{base_event}' row that week. "
+            f"'{base_event}' is the single source of truth for activity: every active week emits "
+            "exactly one such row, and other event types are optional add-ons on top of it."
+        ),
         "cohort_definition": "Signup cohort = first active week (min week). First active week = signup week.",
         "retention_rate": (
             "Classic N-week retention: fraction of a cohort active exactly N weeks after signup; "
@@ -140,17 +157,31 @@ def _retention_metric(grain: str) -> dict:
             "Churn = absence in a week; users MAY return, so compute each retention cell "
             "independently rather than as a survival product."
         ),
-        "weekly_active_users": "WAU = count of distinct user_ids with at least one row in the week.",
+        "weekly_active_users": f"WAU = count of distinct user_ids with a '{base_event}' row in the week.",
     }
 
 
-def _grain_text(grain: str, period: str) -> str:
-    if grain == "daily":
+def _grain_text(output_grain: str, engine_grain: str) -> str:
+    """Row-format note (output grain) + analysis note (engine grain).
+
+    Daily *output* from a weekly *engine* (day-of-week placement) is honest
+    about there being NO day-over-day streak signal — activity is decided
+    weekly and only scattered across days.
+    """
+    if output_grain == "daily":
+        if engine_grain == "daily":
+            return (
+                "One row per (date, user_id, event_type) with event_count. A user appears on a day "
+                "only if they did something that day; absence = an idle day. First observed date = "
+                "signup day. Reconstruct each user's dense daily active calendar (zero-fill idle days) "
+                "before computing streaks or rolling-window metrics — gaps are idle days, not missing data."
+            )
         return (
-            "One row per (date, user_id, event_type) with event_count. A user appears on a day "
-            "only if they did something that day; absence = an idle day. First observed date = "
-            "signup day. Reconstruct each user's dense daily active calendar (zero-fill idle days) "
-            "before computing streaks or rolling-window metrics — gaps are idle days, not missing data."
+            "One row per (date, user_id, event_type) with event_count. A user appears on a day only "
+            "if they had that event that day; absence of a row means no events of that type that day. "
+            "First observed date = signup day. Activity is decided weekly and distributed across "
+            "working days, so the daily pattern carries day-of-week structure but NO day-over-day "
+            "streak dependence; derive retention from the weekly pattern of activity."
         )
     return (
         "One row per (week, user_id, event_type) with event_count. A user appears in a week only "
@@ -164,8 +195,9 @@ def _grain_text(grain: str, period: str) -> str:
 # ---------------------------------------------------------------------------
 def build_brief(config: dict, df: pd.DataFrame, csv_name: str) -> dict:
     meta = config.get("meta", {}) or {}
-    grain = config.get("grain", "weekly")
-    period = _period_col(grain)
+    grain = config.get("grain", "weekly")   # engine grain -> analytical narrative
+    out_grain = _output_grain(config)       # output grain -> aggregation / format
+    period = _period_col(out_grain)
     base_event = config.get("base_event", "page_created")
     dims = _dim_cols(df, period)
     exp_cols = _exp_cols(df)
@@ -178,7 +210,7 @@ def build_brief(config: dict, df: pd.DataFrame, csv_name: str) -> dict:
     for c in exp_cols:
         dtypes[c] = "str"
     schema = {
-        "granularity": grain,
+        "granularity": out_grain,
         "time_column": period,
         "count_column": "event_count",
         "primary_key": [period, "user_id", "event_type"],
@@ -188,14 +220,14 @@ def build_brief(config: dict, df: pd.DataFrame, csv_name: str) -> dict:
 
     analysis = {
         "core_action": base_event,
-        "natural_frequency": grain,
+        "natural_frequency": out_grain,
         "segment_cols": dims,
     }
     if exp_cols:
         analysis["variant_columns"] = exp_cols
 
     data_quality = {
-        "sparsity": "active_periods_only" if grain == "daily" else "active_weeks_only",
+        "sparsity": "active_periods_only" if out_grain == "daily" else "active_weeks_only",
         "event_count_min": int(df["event_count"].min()),
     }
 
@@ -216,7 +248,7 @@ def build_brief(config: dict, df: pd.DataFrame, csv_name: str) -> dict:
     columns: dict = {
         period: {
             "type": "date",
-            "description": ("Calendar day (YYYY-MM-DD)." if grain == "daily"
+            "description": ("Calendar day (YYYY-MM-DD)." if out_grain == "daily"
                             else "Monday date of the weekly period (YYYY-MM-DD)."),
             "values": f"{df[period].nunique()} dates from {t.min().date()} to {t.max().date()}",
         },
@@ -286,7 +318,7 @@ def build_brief(config: dict, df: pd.DataFrame, csv_name: str) -> dict:
 
     # --- time_coverage ---
     time_coverage = {"start_week": str(t.min().date()), "end_week": str(t.max().date())}
-    if grain != "daily":
+    if out_grain != "daily":
         time_coverage["n_weeks"] = int(df[period].nunique())
 
     brief = {
@@ -297,8 +329,8 @@ def build_brief(config: dict, df: pd.DataFrame, csv_name: str) -> dict:
         "data_quality": data_quality,
         "dataset": dataset,
         "task": meta.get("task", _default_task(bool(experiments))),
-        "grain": _grain_text(grain, period),
-        "retention_metric": _retention_metric(grain),
+        "grain": _grain_text(out_grain, grain),
+        "retention_metric": _retention_metric(grain, base_event),
         "time_coverage": time_coverage,
         "columns": columns,
         "known_context": known,
@@ -423,7 +455,8 @@ def _measure_experiment(df: pd.DataFrame, config: dict, e: dict, grain: str) -> 
 
 
 def build_solutions(config: dict, df: pd.DataFrame, seed, csv_name: str) -> dict:
-    grain = config.get("grain", "weekly")
+    grain = config.get("grain", "weekly")   # engine grain
+    out_grain = _output_grain(config)       # output grain (matches the analyst frame)
     experiments = config.get("experiments", []) or []
     shocks = config.get("shocks", []) or []
     ts = config.get("time_series", {}) or {}
@@ -485,7 +518,7 @@ def build_solutions(config: dict, df: pd.DataFrame, seed, csv_name: str) -> dict
             "configured_effect": {k: v for k, v in eff.items()} | (
                 {"traps": e["traps"]} if e.get("traps") else {}
             ),
-            "measured_readout": _measure_experiment(df, config, e, grain),
+            "measured_readout": _measure_experiment(df, config, e, out_grain),
         })
 
     # --- hidden structure ---
