@@ -459,6 +459,7 @@ def build_solutions(config: dict, df: pd.DataFrame, seed, csv_name: str) -> dict
     out_grain = _output_grain(config)       # output grain (matches the analyst frame)
     experiments = config.get("experiments", []) or []
     shocks = config.get("shocks", []) or []
+    sched = config.get("transition_schedule", []) or []
     ts = config.get("time_series", {}) or {}
 
     # --- tasks_to_find (the headline: what the analyst should discover) ---
@@ -474,6 +475,19 @@ def build_solutions(config: dict, df: pd.DataFrame, seed, csv_name: str) -> dict
             f"Detect the {s['type']} anomaly in abs weeks {s['start_week']}-{s['end_week']}{tgt}{scope}: "
             f"{s.get('description', '').strip()}"
         )
+    for sc in sched:
+        cohort = " for cohorts signing up in" if sc.get("cohort_scope") == "new" else " across"
+        desc = sc.get("description", "").strip()
+        if "value" in sc:
+            tasks.append(
+                f"Detect the {sc['arrow']} (transition-rate) shift to {sc['value']}"
+                f"{cohort} abs weeks {sc['start_week']}-{sc['end_week']}: {desc}"
+            )
+        else:
+            tasks.append(
+                f"Detect the gradual {sc['arrow']} drift {sc['from']}->{sc['to']}"
+                f"{cohort} abs weeks {sc['start_week']}-{sc['end_week']}: {desc}"
+            )
     for e in experiments:
         eff = (e.get("effects") or [{}])[0]
         target = eff.get("target", "reactivation")
@@ -506,6 +520,23 @@ def build_solutions(config: dict, df: pd.DataFrame, seed, csv_name: str) -> dict
             entry["cohort_scope"] = s["cohort_scope"]
         shock_ans.append(entry)
 
+    # --- detailed transition-schedule answers (time-varying NURR/CURR/…) ---
+    sched_ans = []
+    for sc in sched:
+        entry = {
+            "arrow": sc["arrow"],
+            "window_abs_weeks": [sc["start_week"], sc["end_week"]],
+            "signature": sc.get("description", "").strip(),
+        }
+        if "value" in sc:
+            entry["value"] = sc["value"]
+        else:
+            entry["from"] = sc["from"]
+            entry["to"] = sc["to"]
+        if sc.get("cohort_scope"):
+            entry["cohort_scope"] = sc["cohort_scope"]
+        sched_ans.append(entry)
+
     # --- experiment answers (configured + measured) ---
     exp_ans = []
     for e in experiments:
@@ -537,7 +568,7 @@ def build_solutions(config: dict, df: pd.DataFrame, seed, csv_name: str) -> dict
             "note": "Plans drive engagement but are NOT observable (no plan column/events).",
             "multipliers": config["plans"].get("multipliers"),
         }
-    for block in ("time_series", "daily", "streak", "notifications"):
+    for block in ("time_series", "daily", "streak", "notifications", "transitions", "transition_schedule"):
         if config.get(block):
             hidden[block] = config[block]
 
@@ -559,6 +590,7 @@ def build_solutions(config: dict, df: pd.DataFrame, seed, csv_name: str) -> dict
         },
         "tasks_to_find": tasks,
         "shocks": shock_ans,
+        "transition_shifts": sched_ans,
         "experiments": exp_ans,
         "hidden_structure": hidden,
         "grader_checklist": grader,

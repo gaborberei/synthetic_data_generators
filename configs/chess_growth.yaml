@@ -1,0 +1,205 @@
+# =============================================================================
+# Chess growth — a SINGLE-EVENT dataset told through the retention arrows
+# =============================================================================
+# A chess.com-like app with an AI game-analysis feature. Players play games;
+# `game_played` is the only logged action. The whole one-year story lives in the
+# player lifecycle — the Duolingo-style growth-model transition arrows
+# (CURR/NURR/…) — plus a couple of one-off operational shocks.
+#
+# Grain: this uses the WEEKLY simulation engine (the arrows are weekly concepts)
+# but emits a DAILY analyst frame via `output_grain: daily` — each active week's
+# games are scattered across days by the `day_of_week` block, then aggregated to
+# a daily calendar. NOTE (as in notion_daily_scatter): activity is decided
+# weekly and only scattered, so the daily calendar carries no real day-over-day
+# streak signal — retention is recovered by rolling up to weekly signup cohorts.
+#
+# Single-event world: `game_played` is the only core action (no causality, no
+# plans, no feature_probabilities, no streak/notifications), so all the signal
+# lives in the daily active calendar and the player lifecycle.
+
+dataset_name: chess_growth     # filename prefix for the analyst-facing CSVs
+base_event: game_played        # the one core event (count = games that day)
+output_grain: daily            # weekly ENGINE, but emit a DAILY analyst frame
+
+# -----------------------------------------------------------------------------
+# Day-of-week placement (weekly engine, daily output). Chess weekends are the
+# busy days, so games land more often on Sat/Sun. A single profile is enough
+# because game_played is the only event.
+# -----------------------------------------------------------------------------
+day_of_week:
+  days: [mon, tue, wed, thu, fri, sat, sun]
+  profiles:
+    weekend_heavy: [1.0, 1.0, 1.0, 1.0, 1.05, 1.35, 1.30]  # Mon..Sun: weekends UP
+  assign:
+    default: weekend_heavy
+
+# -----------------------------------------------------------------------------
+# Meta: editorial text consumed by challenge.py for the brief / solutions. NONE
+# of this is a spoiler — product/event descriptions and analyst framing only.
+# -----------------------------------------------------------------------------
+meta:
+  product: "A chess.com-like app with an AI game-analysis feature. Players play games; game_played is the only logged action, on a DAILY calendar."
+  context_level: minimal
+  description: >
+    One calendar year of DAILY per-player game counts for a growing chess app.
+    Players arrive over the year in weekly signup cohorts. Exactly one event type
+    exists (game_played), so there is no event mix to dissect — all the signal is
+    in the activity time series (day/week-over-week volume) and the player
+    lifecycle (who keeps coming back). Operational and product changes may or may
+    not have occurred during the year and may have left marks in the data — none
+    are named here. Find the patterns and any one-off events.
+  events:
+    game_played: "A chess game was played. The core action; count = games that day."
+  task:
+    - >
+      Characterize signup growth and detect any acquisition anomalies: periods
+      where new-signup volume deviates from the trend (WHEN, magnitude).
+    - >
+      Recover early retention BY SIGNUP COHORT: the fraction of each cohort that
+      comes back after their first week. Find any period where new-user retention
+      collapsed or jumped, and date it to the signup cohort (not calendar week).
+    - >
+      Detect any gradual trend in ONGOING retention (returning active players)
+      across the year, separate from cohort effects and seasonality.
+    - >
+      Find any one-off activity/WAU drops or spikes (WHEN, magnitude, plausible
+      cause). The number of such events is not given.
+    - >
+      Summarize overall product health: growth, DAU/WAU, cohort retention, and
+      engagement mix; handle heavy-tailed activity.
+  beliefs:
+    - >
+      Games-per-active-week is right-skewed: most players play a few games a
+      week, a minority play many. Prefer medians / log scales and per-player
+      inference.
+    - >
+      With only one event type, do not look for an event-mix shift; decompose
+      movements into (active players) x (games per active player), and into
+      calendar-time vs cohort-age.
+    - >
+      Retention is weekly-natural even though the calendar is daily: activity is
+      spread across days within a week, so build the lifecycle from weekly WAU
+      and weekly signup cohorts rather than treating a missed day as churn.
+  hints:
+    - "Roll the daily frame up to weekly WAU and weekly new-signups before any lifecycle metric."
+    - >
+      Build a cohort (age) retention triangle: read the first-week return rate
+      down the signup-cohort axis to spot cohorts that retain unusually badly or
+      well; read ongoing retention across calendar weeks for slow trends.
+    - >
+      Decompose any volume movement into active-player count vs games-per-active-
+      player — a dip could be fewer players, fewer games each, or both.
+    - "Re-cut retention and any anomaly by acquisition_channel / country / platform; weekends are the busy days."
+
+global_settings:
+  base_users: 200          # new players in the first weekly signup cohort
+  growth_rate: 0.02        # week-over-week growth in new signups (2%)
+  start_date: "2024-01-01" # first cohort (a Monday); week 0 = first week of January
+  periods_to_simulate: 52  # weekly signup cohorts
+
+# -----------------------------------------------------------------------------
+# Retention: Duolingo growth-model arrows. A player's weekly active probability
+# depends on how long ago they last played and which state they were in:
+#   CURR  Current -> Current        (ongoing retention; the North Star)
+#   NURR  New -> Current            (first-week / early retention)
+#   RURR  Reactivated -> Current
+#   SURR  Resurrected -> Current
+#   REAC  gap of 2-4 weeks -> Reactivated
+#   RESU  gap of 5+ weeks -> Resurrected
+# These are the baseline values; `transition_schedule` below moves NURR and CURR
+# over the year.
+# -----------------------------------------------------------------------------
+transitions:
+  CURR: 0.78
+  NURR: 0.45
+  RURR: 0.35
+  SURR: 0.20
+  REAC: 0.15
+  RESU: 0.05
+
+# -----------------------------------------------------------------------------
+# Time-varying transition arrows. Each entry overrides one arrow inside a week
+# window. `cohort_scope: new` anchors the window on SIGNUP week (the override
+# follows that cohort — the right home for NURR/early retention); without it the
+# window is absolute calendar weeks (the right home for a CURR drift). `value`
+# sets a flat rate; `from`/`to` linearly ramps across the window.
+#   Week mapping (start 2024-01-01): Mar~9-12, Apr~13-17, May-Jul~18-30,
+#   mid-Sep~36-37, full year 0-51.
+# -----------------------------------------------------------------------------
+transition_schedule:
+  # (1) Bad March marketing campaign: wrong users, early retention collapses.
+  - {arrow: NURR, start_week: 9, end_week: 12, value: 0.12, cohort_scope: new,
+     description: "Bad March marketing campaign attracts the wrong users - NURR collapses to 12% and they churn fast"}
+  # (3) New onboarding flow (May-Jul): a big early-retention improvement.
+  - {arrow: NURR, start_week: 18, end_week: 30, value: 0.60, cohort_scope: new,
+     description: "New onboarding flow (May-Jul) - NURR jumps to 60%"}
+  # (5) Gradual product improvements lift ongoing retention all year.
+  - {arrow: CURR, start_week: 0, end_week: 51, from: 0.78, to: 0.86,
+     description: "Gradual product improvements lift ongoing (CURR) retention 78% -> 86% across the year"}
+
+# -----------------------------------------------------------------------------
+# Shocks: time-boxed operational events. `start_week`/`end_week` are absolute,
+# 0-indexed simulation weeks.
+#   (2) April marketing budget cut  -> fewer signups, behaviour normal.
+#   (4) mid-September AI outage      -> ~30% drop in weekly active users.
+# -----------------------------------------------------------------------------
+shocks:
+  - type: acquisition
+    start_week: 13
+    end_week: 17
+    multiplier: 0.5
+    description: "Marketing budget cut - fewer signups (Apr), users who sign up behave normally"
+  - type: retention
+    start_week: 36
+    end_week: 37
+    multiplier: 0.6
+    description: "External outage takes down the AI analysis feature - ~30% drop in weekly active users (mid-Sep)"
+
+# -----------------------------------------------------------------------------
+# Time-series realism. Seasonality is 1 + amp*cos(2*pi*week/52): peak at week 0
+# (January) — chess is a winter sport — trough mid-year. Retention amplitude and
+# noise are kept small/dampened so the gradual CURR drift stays recoverable.
+# -----------------------------------------------------------------------------
+time_series:
+  seasonality:
+    period_weeks: 52
+    acquisition_amp: 0.30
+    activity_amp: 0.15
+    retention_amp: 0.02
+  noise:
+    phi: 0.7
+    sigma: 0.06
+    retention_power: 0.25
+  user_variance_sigma: 0.45   # persistent lognormal per-player engagement
+
+# Games skew toward the evening.
+timestamps:
+  peak_hour: 20
+
+# -----------------------------------------------------------------------------
+# Dimensions: per-player attributes at signup, written on every event.
+# Channel quality is real (referral retains best, paid worst).
+# -----------------------------------------------------------------------------
+dimensions:
+  acquisition_channel:
+    values: {organic: 0.45, paid_search: 0.20, social: 0.25, referral: 0.10}
+    retention_multiplier: {organic: 1.0, paid_search: 0.80, social: 0.85, referral: 1.15}
+  country:
+    values: {US: 0.30, IN: 0.20, RU: 0.12, DE: 0.10, BR: 0.10, UK: 0.10, PH: 0.08}
+  platform:
+    values: {web: 0.45, ios: 0.25, android: 0.30}
+
+# -----------------------------------------------------------------------------
+# Segments: how many games an active player gets through in an active week.
+# No feature_probabilities — game_played is the only event.
+# -----------------------------------------------------------------------------
+segments:
+  casual:
+    prob: 0.50
+    activity_distribution: { type: poisson, lambda: 1.5 }
+  core:
+    prob: 0.40
+    activity_distribution: { type: poisson, lambda: 5.0 }
+  power:
+    prob: 0.10
+    activity_distribution: { type: poisson, lambda: 12.0 }
