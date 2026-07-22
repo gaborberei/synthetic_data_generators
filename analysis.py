@@ -25,14 +25,29 @@ _SHOCK_COLORS = ["red", "orange", "purple", "brown", "teal", "magenta"]
 # --------------------------------------------------------------------- #
 # Loading + shared tables
 # --------------------------------------------------------------------- #
+def _resolve(data_dir: Path, name: str) -> Path:
+    """Locate a raw/ground-truth file: in data_dir, else the tmp/<name>/ sibling.
+
+    `generate --raw` writes these artifacts to tmp/<dataset>/ (not the handoff
+    folder), so resolve them from there when they are not alongside the analyst
+    CSV. Falls back to the data_dir path so a genuinely missing file still raises
+    a clear FileNotFoundError.
+    """
+    p = data_dir / name
+    if p.exists():
+        return p
+    alt = Path("tmp") / data_dir.name / name
+    return alt if alt.exists() else p
+
+
 def load(data_dir: Path) -> dict:
-    with open(data_dir / "ground_truth_config.yaml") as f:
+    with open(_resolve(data_dir, "ground_truth_config.yaml")) as f:
         config = yaml.safe_load(f)
     prefix = config.get("dataset_name", data_dir.name)
-    weekly = pd.read_csv(data_dir / f"{prefix}_events_weekly.csv", parse_dates=["week"])
+    weekly = pd.read_csv(_resolve(data_dir, f"{prefix}_events_weekly.csv"), parse_dates=["week"])
     weekly["abs_week"] = ((weekly["week"] - weekly["week"].min()).dt.days // 7).astype(int)
-    users = pd.read_csv(data_dir / "ground_truth_users.csv")
-    assignments_path = data_dir / f"{prefix}_experiment_assignments.csv"
+    users = pd.read_csv(_resolve(data_dir, "ground_truth_users.csv"))
+    assignments_path = _resolve(data_dir, f"{prefix}_experiment_assignments.csv")
     assignments = (
         pd.read_csv(assignments_path) if assignments_path.exists() else None
     )

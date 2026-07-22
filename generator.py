@@ -85,6 +85,12 @@ class CausalShockGenerator:
         self.causality: dict | None = config.get("causality")
         self.base_event: str = config.get("base_event", PAGE_CREATED)
         self.transitions: dict | None = config.get("transitions")
+        # Optional time-varying overrides for individual transition arrows
+        # (NURR/CURR/…). Each entry names an `arrow` and a week window; a fixed
+        # `value` sets the rate, or `from`/`to` linearly ramps it across the
+        # window. `cohort_scope: new` anchors the window on signup week (follows
+        # the cohort) instead of absolute week. Empty -> arrows are constants.
+        self.transition_schedule: list[dict] = config.get("transition_schedule", [])
         self.timestamps_cfg: dict = config.get("timestamps", {})
         # Grain: "weekly" (default, the original engine) or "daily" (a separate
         # per-day simulation path for streak/habit products — see _simulate_daily).
@@ -371,6 +377,29 @@ class CausalShockGenerator:
             mult = np.where(mask, mult * shock["multiplier"], mult)
         return mult
 
+    def _scheduled_arrows(self, abs_week: int, cohort_week: int) -> dict:
+        """Effective transition rates for this week, applying `transition_schedule`.
+
+        Starts from the constant `self.transitions` and, for each schedule entry
+        whose window contains the relevant anchor week, overrides that arrow's
+        rate. `cohort_scope: new` anchors on `cohort_week` (so the override
+        follows a signup cohort — the natural home for NURR); otherwise it
+        anchors on `abs_week` (calendar time — the natural home for a CURR drift).
+        A `value` sets a flat rate; `from`/`to` linearly ramps across the window.
+        """
+        rates = dict(self.transitions)
+        for entry in self.transition_schedule:
+            anchor = cohort_week if entry.get("cohort_scope") == "new" else abs_week
+            start, end = entry["start_week"], entry["end_week"]
+            if not (start <= anchor <= end):
+                continue
+            if "value" in entry:
+                rates[entry["arrow"]] = entry["value"]
+            else:
+                frac = (anchor - start) / max(end - start, 1)
+                rates[entry["arrow"]] = entry["from"] + (entry["to"] - entry["from"]) * frac
+        return rates
+
     def _experiment_vec(
         self,
         effect_type: str,
@@ -628,7 +657,11 @@ class CausalShockGenerator:
                     # New users are active by definition in their signup week.
                     act = np.arange(n_seg)
                 else:
-                    t = self.transitions
+                    t = (
+                        self._scheduled_arrows(abs_week, cohort_week)
+                        if self.transition_schedule
+                        else self.transitions
+                    )
                     gap = rel_week - last_active
                     p_base = np.where(
                         gap == 1,
