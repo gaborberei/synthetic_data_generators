@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from analysis import experiment_lift, experiment_summary, load, retention_table
+from analysis import _resolve, experiment_lift, experiment_summary, load, retention_table
 
 _results: list[tuple[bool, str]] = []
 
@@ -111,9 +111,9 @@ def run_checks_daily(data_dir: Path, config: dict) -> int:
     g = config["global_settings"]
     segments = config["segments"]
     prefix = config.get("dataset_name", data_dir.name)
-    daily = pd.read_csv(data_dir / f"{prefix}_events_daily.csv", parse_dates=["date"])
-    users = pd.read_csv(data_dir / "ground_truth_users.csv")
-    ts_path = data_dir / "ground_truth_timeseries.csv"
+    daily = pd.read_csv(_resolve(data_dir, f"{prefix}_events_daily.csv"), parse_dates=["date"])
+    users = pd.read_csv(_resolve(data_dir, "ground_truth_users.csv"))
+    ts_path = _resolve(data_dir, "ground_truth_timeseries.csv")
     ts_acq = (
         pd.read_csv(ts_path).set_index("week")["acquisition_mult"]
         if ts_path.exists() else None
@@ -211,7 +211,7 @@ def run_checks_daily(data_dir: Path, config: dict) -> int:
 
     exp = next((e for e in config.get("experiments", [])
                 if any(eff["type"] == "notification" for eff in e.get("effects", []))), None)
-    asg_path = data_dir / f"{prefix}_experiment_assignments.csv"
+    asg_path = _resolve(data_dir, f"{prefix}_experiment_assignments.csv")
     if exp and asg_path.exists():
         asg = pd.read_csv(asg_path)
         asg = asg[asg["experiment"] == exp["name"]][["user_id", "group"]]
@@ -276,7 +276,7 @@ def run_checks_daily(data_dir: Path, config: dict) -> int:
 
 
 def run_checks(data_dir: Path) -> int:
-    with open(data_dir / "ground_truth_config.yaml") as f:
+    with open(_resolve(data_dir, "ground_truth_config.yaml")) as f:
         cfg = yaml.safe_load(f)
     if cfg.get("grain") == "daily":
         return run_checks_daily(data_dir, cfg)
@@ -289,7 +289,7 @@ def run_checks(data_dir: Path) -> int:
     # --- 1. Cohort sizes are exactly base * (1+growth)^w * acquisition ---
     # With a time_series block the realized weekly multiplier (seasonality *
     # noise * spikes) is part of the answer key, so the check stays exact.
-    ts_path = data_dir / "ground_truth_timeseries.csv"
+    ts_path = _resolve(data_dir, "ground_truth_timeseries.csv")
     ts_acq = (
         pd.read_csv(ts_path).set_index("week")["acquisition_mult"]
         if ts_path.exists()

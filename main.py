@@ -61,6 +61,10 @@ def cmd_generate(args: argparse.Namespace) -> None:
     out_dir = Path(args.output_dir or Path("output") / Path(args.config).stem)
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = config.get("dataset_name", Path(args.config).stem)
+    # The --raw artifacts (event log + ground truth) are kept OUT of the handoff
+    # folder so output/<dataset>/ holds only the 3 analyst-facing files. Default
+    # location: a gitignored tmp/<dataset>/ (override with --raw-dir).
+    raw_dir = Path(args.raw_dir) if args.raw_dir else Path("tmp") / prefix
     # Output grain (filename suffix + raw dump) may differ from the engine grain:
     # a weekly-engine config can set output_grain: daily (day-of-week placement).
     grain = config.get("output_grain", config.get("grain", "weekly"))
@@ -89,23 +93,26 @@ def cmd_generate(args: argparse.Namespace) -> None:
         return
 
     # --- raw dump (only with --raw): event log + ground truth ---------------
-    # Lets the `analyze` and `validate` commands run against this dataset.
-    with open(out_dir / "ground_truth_config.yaml", "w") as f:
+    # Written to raw_dir (default tmp/<dataset>/), NOT the handoff folder, so
+    # output/<dataset>/ stays clean. Lets `analyze` / `validate` run against this
+    # dataset — they resolve these files from tmp/ automatically (analysis.load).
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    with open(raw_dir / "ground_truth_config.yaml", "w") as f:
         yaml.safe_dump(config, f, sort_keys=False)
-    generator.users_df.to_csv(out_dir / "ground_truth_users.csv", index=False)
+    generator.users_df.to_csv(raw_dir / "ground_truth_users.csv", index=False)
     if generator.timeseries_df is not None:
-        generator.timeseries_df.to_csv(out_dir / "ground_truth_timeseries.csv", index=False)
+        generator.timeseries_df.to_csv(raw_dir / "ground_truth_timeseries.csv", index=False)
     if not generator.assignments_df.empty:
         generator.assignments_df.to_csv(
-            out_dir / f"{prefix}_experiment_assignments.csv", index=False
+            raw_dir / f"{prefix}_experiment_assignments.csv", index=False
         )
     public_df = df.drop(columns=["segment"]) if args.hide_truth else df
-    public_df.to_csv(out_dir / f"{prefix}_events.csv", index=False)
+    public_df.to_csv(raw_dir / f"{prefix}_events.csv", index=False)
     if grain == "daily":
-        grouped_daily(public_df).to_csv(out_dir / f"{prefix}_events_daily.csv", index=False)
+        grouped_daily(public_df).to_csv(raw_dir / f"{prefix}_events_daily.csv", index=False)
     else:
-        grouped_weekly(public_df).to_csv(out_dir / f"{prefix}_events_weekly.csv", index=False)
-    print(f"  --raw: wrote event log + ground truth to {out_dir}/")
+        grouped_weekly(public_df).to_csv(raw_dir / f"{prefix}_events_weekly.csv", index=False)
+    print(f"  --raw: wrote event log + ground truth to {raw_dir}/")
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
@@ -136,6 +143,10 @@ def main() -> None:
     p.add_argument("--hide-truth", action="store_true",
                    help="with --raw, drop the segment column from the raw events "
                         "CSV (the analyst CSV never contains segment)")
+    p.add_argument("--raw-dir", default=None,
+                   help="directory for the --raw artifacts (event log + ground "
+                        "truth); default: tmp/<dataset>. Kept out of the handoff "
+                        "folder so output/<dataset>/ holds only the 3 analyst files")
     p.set_defaults(func=cmd_generate)
 
     p = sub.add_parser("analyze", help="render dashboards for a generated dataset")
